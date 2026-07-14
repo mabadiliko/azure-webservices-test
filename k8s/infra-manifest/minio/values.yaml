@@ -1,0 +1,40 @@
+# MinIO — in-cluster S3-compatible object storage.
+# Backing store for Loki (logs), Thanos (long-term metrics), and backups.
+#
+# Standalone mode (single replica) — fits the budget/single-node cluster.
+# The PVC size is deliberately a Standard SSD tier boundary (E4 = 32 GiB):
+# Azure rounds any in-between size UP to the next tier and bills for it, so
+# always request an exact tier (4/8/16/32/64/128/256... GiB).
+mode: standalone
+replicas: 1
+
+persistence:
+  enabled: true
+  storageClass: disk-standardssd
+  size: 32Gi          # E4 tier — do not use non-tier sizes
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+# Root credentials come from a pre-created Secret (Phase 1: manual;
+# Phase 2: migrated to an ExternalSecret from Key Vault via ESO).
+existingSecret: minio-root
+
+# Pre-create the buckets the platform needs.
+buckets:
+  - name: loki
+    policy: none
+    purge: false
+  - name: thanos
+    policy: none
+    purge: false
+  - name: velero
+    policy: none
+    purge: false
+
+# No ingress for MinIO in the test round — accessed in-cluster only.
+# (A console/API ingress can be added later behind Traefik if needed.)

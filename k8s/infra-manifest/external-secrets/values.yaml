@@ -1,0 +1,26 @@
+# External Secrets Operator (ESO).
+# Reconciles native k8s Secrets from Azure Key Vault. Authenticates to Azure via
+# Workload Identity — the ESO ServiceAccount federates to a user-assigned managed
+# identity that holds 'Key Vault Secrets User' on the vault (no static creds).
+#
+# The clientID is injected at install time via --set (it's an Azure identity ID,
+# not a secret, but kept out of the committed file so this stays cluster-agnostic).
+installCRDs: true
+
+# Label the pods for Azure Workload Identity, and annotate the SA with the
+# managed identity's client ID.
+serviceAccount:
+  create: true
+  name: external-secrets
+  # annotations.azure.workload.identity/client-id is set via --set at install.
+
+podLabels:
+  azure.workload.identity/use: "true"
+
+# The webhook + cert-controller also run; modest resources for a shared cluster.
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 192Mi

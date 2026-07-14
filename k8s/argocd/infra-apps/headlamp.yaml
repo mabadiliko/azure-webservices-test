@@ -1,0 +1,33 @@
+# Wave 3 — Headlamp (k8s web UI; SA-token login). Needs Traefik + a cert issuer.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: headlamp
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: headlamp
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/headlamp/
+      chart: headlamp
+      targetRevision: 0.41.0
+      helm:
+        releaseName: headlamp
+        valueFiles:
+          - $values/k8s/infra-manifest/headlamp/values.yaml
+    - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

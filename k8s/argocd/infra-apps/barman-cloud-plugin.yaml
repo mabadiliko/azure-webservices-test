@@ -1,0 +1,36 @@
+# Wave 1 — CloudNativePG Barman Cloud Plugin: the supported backup method for
+# CNPG Postgres clusters (the classic spec.backup.barmanObjectStore is
+# deprecated and removed in CNPG 1.31). Installs into cnpg-system; requires
+# cert-manager (wave 0). Projects then declare an ObjectStore + reference the
+# plugin in their Cluster.spec.plugins (see k8s/projects/_template).
+#
+# Installed from the pinned upstream release manifest.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: barman-cloud-plugin
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  source:
+    repoURL: https://github.com/cloudnative-pg/plugin-barman-cloud
+    targetRevision: v0.13.0
+    path: kubernetes
+    directory:
+      # The release also ships a flat manifest.yaml; the kubernetes/ kustomize
+      # base is the GitOps-friendly source. recurse to pick up the components.
+      recurse: true
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true

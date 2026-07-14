@@ -1,0 +1,10 @@
+# CloudNativePG operator — manages PostgreSQL clusters as CRs.
+# Operator only here; per-project Postgres `Cluster` resources are created on
+# demand (with backups to the MinIO `thanos`/dedicated bucket via Barman).
+replicaCount: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 100Mi
+  limits:
+    memory: 256Mi

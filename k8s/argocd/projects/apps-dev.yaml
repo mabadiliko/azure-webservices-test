@@ -1,0 +1,21 @@
+# AppProject for project DEV applications (optional ArgoCD registration).
+# Tighter blast radius than `infra`: this repo only, and the only cluster-scoped
+# resource an app may create is its own Namespace. Projects manage everything
+# else inside their namespaces however they like.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Project dev applications (namespace-scoped, self-managed by projects)
+  sourceRepos:
+    - 'https://github.com/*'      # tighten to the specific org/repo once the slug is confirmed
+  destinations:
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace

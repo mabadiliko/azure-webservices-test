@@ -1,0 +1,50 @@
+# Wave 2 — monitoring: kube-prometheus-stack + Loki + Alloy in one Application
+# (multi-source). Needs MinIO buckets (Loki + the Prometheus Thanos sidecar both
+# use MinIO) and the seeded secrets (grafana-admin, loki-minio, thanos-objstore).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 87.15.1
+      helm:
+        releaseName: kps
+        valueFiles:
+          - $values/k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki
+      targetRevision: 6.49.0
+      helm:
+        releaseName: loki
+        valueFiles:
+          - $values/k8s/infra-manifest/monitoring/loki-values.yaml
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: alloy
+      targetRevision: 1.5.0
+      helm:
+        releaseName: alloy
+        valueFiles:
+          - $values/k8s/infra-manifest/monitoring/alloy-values.yaml
+    - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true

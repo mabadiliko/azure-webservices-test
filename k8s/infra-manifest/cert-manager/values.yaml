@@ -1,0 +1,8 @@
+# cert-manager. Install the CRDs with the chart (so ArgoCD manages them too).
+crds:
+  enabled: true
+# Modest resources for a shared cluster.
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi

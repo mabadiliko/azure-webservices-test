@@ -1,0 +1,58 @@
+deployment:
+  replicas: 1
+
+# Enable both Ingress and Gateway API providers
+providers:
+  kubernetesCRD:
+    enabled: true
+    allowCrossNamespace: true
+  kubernetesIngress:
+    enabled: true
+    ingressClass: traefik
+  kubernetesGateway:
+    enabled: true
+
+# Traefik is the default ingress class for the cluster.
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+  name: traefik
+
+# Gateway API GatewayClass
+gatewayClass:
+  enabled: true
+  name: traefik
+
+# Redirect HTTP → HTTPS globally
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+
+service:
+  type: LoadBalancer
+  # No Azure-specific LB annotations: AKS auto-assigns a Standard-SKU public IP
+  # in the cluster's node resource group. Keeping this annotation-free also aids
+  # portability — one of the few Azure-specific touchpoints (see README Portability).
+
+# Modest resource requests/limits (single-node cluster; tune as load grows)
+resources:
+  requests:
+    cpu: 50m
+    memory: 100Mi
+  limits:
+    memory: 256Mi
+
+# Ingress for the Traefik dashboard (internal only, no public exposure)
+ingressRoute:
+  dashboard:
+    enabled: false
+
+# Logging (Traefik chart v41: `log:` replaced `logs:`; access logs are a
+# separate top-level `accessLog:` key — an empty map enables them with defaults).
+log:
+  level: WARN
+accessLog: {}

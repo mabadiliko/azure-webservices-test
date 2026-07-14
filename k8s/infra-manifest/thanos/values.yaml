@@ -1,0 +1,58 @@
+# Thanos — long-term + HA metrics on top of Prometheus.
+# Uses the upstream quay.io/thanos/thanos image (via the stevehipwell chart).
+# Reads the MinIO `thanos` bucket — the same bucket the Prometheus Thanos
+# sidecar uploads TSDB blocks to (objstore config in the thanos-objstore secret).
+
+# Point every component at the existing thanos-objstore secret (created out of
+# band; on the real cluster its creds come from ESO). Key is objstore.yml.
+objstoreConfig:
+  create: false
+  name: thanos-objstore
+  key: objstore.yml
+
+# Query: unified view over the live Prometheus sidecar + the Store gateway.
+# The sidecar's gRPC is discovered via the prometheus-operated headless service
+# (DNS SRV on the grpc port 10901). The chart's own storeGateway endpoint is
+# wired automatically.
+additionalEndpoints:
+  - dnssrv+_grpc._tcp.prometheus-operated.monitoring.svc.cluster.local
+
+query:
+  enabled: true
+  enableDnsDiscovery: true
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+
+queryFrontend:
+  enabled: false
+
+# Store gateway: serves historical blocks from object storage.
+storeGateway:
+  enabled: true
+  replicas: 1
+  persistence:
+    enabled: true
+    storageClass: disk-standardssd
+    size: 8Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+# Compactor: compaction + downsampling + retention on the bucket.
+compact:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: disk-standardssd
+    size: 8Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+# Not needed for this single-cluster setup.
+receive:
+  enabled: false
+rule:
+  enabled: false

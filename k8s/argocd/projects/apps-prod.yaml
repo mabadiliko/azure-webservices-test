@@ -1,0 +1,21 @@
+# AppProject for project PROD applications (optional ArgoCD registration).
+# Same tight blast radius as apps-dev. Kept as a separate project so prod can be
+# governed independently (e.g. stricter review / different sync policy) even
+# though the resource restrictions match.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Project prod applications (namespace-scoped, self-managed by projects)
+  sourceRepos:
+    - 'https://github.com/*'      # tighten to the specific org/repo once the slug is confirmed
+  destinations:
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
