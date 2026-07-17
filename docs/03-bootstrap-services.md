@@ -11,8 +11,10 @@ it).
 
 ArgoCD deploys the *workloads*, but a few things must exist **before** the root
 app syncs — things ArgoCD/Helm can't create for you: the bootstrap secrets in
-Key Vault, the Gateway API CRDs, the Azure identities/roles for ESO/Velero/CNPG
-backups, and the two client-id placeholders. Do Part A first, then Part B.
+Key Vault, the Azure identities/roles for ESO/Velero/CNPG backups, and the two
+client-id placeholders. Do Part A first, then Part B. (The Gateway API CRDs that
+Traefik needs are now installed by ArgoCD itself — the `gateway-api-crds` app in
+wave 0 — so they're no longer a manual prerequisite.)
 
 ---
 
@@ -23,15 +25,34 @@ backups, and the two client-id placeholders. Do Part A first, then Part B.
 **Key Vault is the source of truth.** Put the infra secrets in the Key Vault
 once; ESO's `ExternalSecret`s (in `k8s/infra-manifest/external-secrets/`)
 materialize them into the cluster, so a **rebuild recreates them automatically**.
-Create these KV secrets (random values where noted):
+
+`KV` is the durable vault from doc 02 (`kv-scouterna-webservices` for this
+deployment — the vault name is globally unique, so no resource group is needed on
+these commands). Because the vault is durable, its secrets often **survive a
+cluster teardown** — list them first, and skip any that already exist (or let
+`secret set` add a new version):
 
 ```bash
-KV=<key-vault-name>
+KV=kv-scouterna-webservices
+az keyvault secret list --vault-name $KV --query "[].name" -o tsv   # what's already there
+```
+
+Create the secrets that are missing (random values where noted):
+
+```bash
 az keyvault secret set --vault-name $KV --name minio-root-user            --value admin
 az keyvault secret set --vault-name $KV --name minio-root-password        --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KV --name grafana-admin-password     --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
-az keyvault secret set --vault-name $KV --name grafana-github-client-secret --value "<github-oauth-app-client-secret>"   # from A4
+az keyvault secret set --vault-name $KV --name grafana-github-client-secret --value "<github-oauth-app-client-secret>"   # from A3
 ```
+
+> **`grafana-github-client-secret` comes from the GitHub OAuth app in A3**, which
+> you reach later. You don't need it to bring the cluster up — set a placeholder
+> now and overwrite it after A3 (ESO picks up the new version on its next
+> refresh). The only thing that stays broken until then is Grafana's GitHub
+> login; everything else, including the break-glass admin password, works. The
+> `grafana-github-oauth` `ExternalSecret` must still exist for Grafana to start,
+> so do set *some* value here, even a placeholder.
 
 The `ExternalSecret`s then produce the in-cluster secrets consumers expect:
 `minio-root`, `loki-minio`, `thanos-objstore` (composed from the MinIO values),
@@ -47,15 +68,7 @@ in-cluster secrets by hand.
 > **self-heals** the instant ESO reconciles the value from the Key Vault. Nothing
 > to babysit — and a rebuild recreates every secret automatically from KV.
 
-### A2. Gateway API CRDs
-
-Traefik's Gateway provider needs these; the Traefik app doesn't install them.
-
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
-```
-
-### A3. Fill the client-id placeholders
+### A2. Fill the client-id placeholders
 
 Two ArgoCD Applications carry `<...>` placeholders that must be set to real
 values before they sync (Azure identifiers, not secrets):
@@ -64,10 +77,10 @@ values before they sync (Azure identifiers, not secrets):
   (the ESO managed-identity client-id from doc 02).
 - `k8s/argocd/infra-apps/velero.yaml` → `<VELERO_CLIENT_ID>`,
   `<BACKUP_STORAGE_ACCOUNT>`, `<SUBSCRIPTION_ID>`, `<NODE_RESOURCE_GROUP>`
-  (from A5). Also edit the `ClusterSecretStore` vault URL in
+  (from A4). Also edit the `ClusterSecretStore` vault URL in
   `k8s/infra-manifest/external-secrets/clustersecretstore.yaml`.
 
-### A4. Grafana GitHub OAuth app
+### A3. Grafana GitHub OAuth app
 
 Daily Grafana login is **GitHub OAuth**, restricted to the **Scouterna** org,
 with GitHub teams → Grafana roles (config in `kube-prometheus-stack-values.yaml`,
@@ -82,7 +95,7 @@ with GitHub teams → Grafana roles (config in `kube-prometheus-stack-values.yam
    (or in the `grafana-github-oauth` secret seeded in A1).
 4. Set `role_attribute_path` to the real Scouterna team slugs.
 
-### A5. Azure prerequisites for backups (Velero + CNPG)
+### A4. Azure prerequisites for backups (Velero + CNPG)
 
 Backups go to a durable, external storage account (see
 `infra/backup-storage.bicep`), created once in the `webservices-infra` RG. These
@@ -128,7 +141,7 @@ The root app brings up every common service in dependency order:
 
 | Wave | Services |
 |---|---|
-| 0 | cluster-infra (StorageClasses + ClusterIssuers), cert-manager, external-secrets (ESO operator) |
+| 0 | cluster-infra (StorageClasses + ClusterIssuers), cert-manager, external-secrets (ESO operator), gateway-api-crds |
 | 1 | traefik, minio, cloudnative-pg, external-secrets-config (ClusterSecretStore + ExternalSecrets), barman-cloud-plugin |
 | 2 | monitoring (kube-prometheus-stack + Loki + Alloy) |
 | 3 | thanos, headlamp |
@@ -164,7 +177,7 @@ choice.
 
 **Other infra UIs:** Headlamp uses per-developer **ServiceAccount tokens** (the
 token *is* the k8s authorization — a dev sees only their namespaces; see
-[onboarding.md](onboarding.md)). Grafana uses **GitHub OAuth** (A4).
+[onboarding.md](onboarding.md)). Grafana uses **GitHub OAuth** (A3).
 
 ---
 

@@ -23,7 +23,7 @@ Based on each project's real release velocity and blast radius:
 | Cadence | Components | Notes |
 |---|---|---|
 | **Quarterly** (fast-movers) | kube-prometheus-stack, Traefik, ArgoCD, Grafana/Loki/Alloy | Release often; chart-major bumps can change values. Review changelogs. |
-| **Semi-annual** (stable) | cert-manager, MinIO, CloudNativePG, Thanos, Headlamp, External Secrets | Slower cadence, fewer breaking changes. |
+| **Semi-annual** (stable) | cert-manager, MinIO, CloudNativePG, Thanos, Headlamp, External Secrets, Gateway API CRDs | Slower cadence, fewer breaking changes. Bump the Gateway API CRDs in step with Traefik (see below). |
 | **AKS Kubernetes** | the cluster | Patch upgrades are automatic (`autoUpgradeProfile: patch` in the Bicep). **Minor** upgrades (1.33→1.34) are manual, ~3×/year following the K8s release train — do them before the running minor goes out of AKS support. |
 
 ## Upgrade-sensitive components (read the changelog first)
@@ -38,6 +38,11 @@ Not all bumps are equal. These carry a real risk of breaking changes:
   rename values / bump CRDs. Diff the values against the new chart's defaults.
 - **Traefik** — chart majors (e.g. 39→41) can change the values schema and the
   Traefik minor (v3.6→v3.7). Verify IngressRoutes / middlewares still render.
+- **Gateway API CRDs** — installed by the `gateway-api-crds` ArgoCD app (wave 0),
+  pinned by `targetRevision` (a git tag). Bump it in step with Traefik: check the
+  Traefik release's supported Gateway API version first, then move the tag. The
+  app has `prune: false`, so the CRDs (and any Gateways/HTTPRoutes) are never
+  deleted by a sync — upgrades apply in place.
 - **cert-manager** — generally smooth, but CRD upgrades must be applied (the
   chart handles this with `crds.enabled: true`).
 
@@ -82,6 +87,7 @@ As of the initial build:
 | ArgoCD | v3.4.5 |
 | cert-manager | v1.20.2 |
 | Traefik | 41.0.2 (v3.7) |
+| Gateway API CRDs | v1.2.1 |
 | MinIO | 5.4.0 |
 | kube-prometheus-stack | 87.15.1 |
 | Loki / Alloy | 6.49.0 / 1.5.0 |

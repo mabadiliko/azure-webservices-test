@@ -59,8 +59,10 @@ kubectl get nodes -o wide                 # Ready, Standard_D4as_v5, AzureLinux
 kubectl -n kube-system get pods | grep cilium   # cilium + cilium-operator Running (eBPF dataplane)
 ```
 
-The `--admin` kubeconfig is the infra bootstrap credential. Save its output
-`oidcIssuerUrl` — it's needed for the Key Vault federation (doc 02).
+The `--admin` kubeconfig is the infra bootstrap credential.
+
+Optionally confirm the OIDC issuer is enabled (doc 02 fetches it itself when it
+sets up the Key Vault federation, so there's nothing to copy down here):
 
 ```bash
 az aks show -g <rg> -n webservices-v2 --query oidcIssuerProfile.issuerUrl -o tsv

@@ -14,6 +14,11 @@ az deployment group create -g webservices-infra \
   -f infra/keyvault.bicep -p keyVaultName=<globally-unique-name>
 ```
 
+The `-g webservices-infra` on the deployment is what places the vault in that
+resource group — the Bicep names no RG itself. The vault inherits the RG's
+location (`keyvault.bicep` uses `resourceGroup().location`), so creating the RG
+with `-l swedencentral` puts the vault in Sweden Central too.
+
 **Gotcha:** KV names are globally unique across ALL Azure tenants, and
 `az keyvault check-name` is optimistic (can report a taken name as available).
 A generic name like `kv-webservices` was already taken → deploy failed with
@@ -39,7 +44,7 @@ Binds the identity to the cluster's OIDC issuer for the SA ESO runs as.
 cluster's issuer (the identity + role grant persist).
 
 ```bash
-ISSUER="<cluster oidc issuer url from doc 01>"
+ISSUER=$(az aks show -g <rg> -n webservices-v2 --query oidcIssuerProfile.issuerUrl -o tsv)
 az identity federated-credential create -g webservices-infra --identity-name id-eso-webservices \
   -n eso-<cluster> \
   --issuer "$ISSUER" \
