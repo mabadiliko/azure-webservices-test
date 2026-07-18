@@ -9,7 +9,7 @@
 // =============================================================================
 using '../main.bicep'
 
-param clusterName = 'webservices-v2'
+param clusterName = 'webservices-v2-test'
 param location = 'swedencentral'
 
 // --- Budget-tuned defaults ---

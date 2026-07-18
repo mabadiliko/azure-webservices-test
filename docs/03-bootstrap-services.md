@@ -20,7 +20,22 @@ wave 0 — so they're no longer a manual prerequisite.)
 
 ## Part A — Prerequisites (before applying the root app)
 
-### A1. Bootstrap secrets
+### A1. Grafana GitHub OAuth app
+
+Daily Grafana login is **GitHub OAuth**, restricted to the **Scouterna** org,
+with GitHub teams → Grafana roles (config in `kube-prometheus-stack-values.yaml`,
+`grafana.ini` `auth.github`). The admin password is **break-glass only**. Do this
+first so its **Client Secret** is ready to write with the other secrets in A2.
+
+1. Create a **GitHub OAuth App** (Scouterna org → Settings → Developer settings →
+   OAuth Apps): Homepage `https://grafana.wsinfra.scouterna.net`, callback
+   `https://grafana.wsinfra.scouterna.net/login/github`.
+2. Note the **Client ID** — it fills `<GITHUB_CLIENT_ID>` in A4.
+3. Note the **Client Secret** — it becomes the `grafana-github-client-secret`
+   Key Vault entry in A2.
+4. Set `role_attribute_path` to the real Scouterna team slugs.
+
+### A2. Bootstrap secrets
 
 **Key Vault is the source of truth.** Put the infra secrets in the Key Vault
 once; ESO's `ExternalSecret`s (in `k8s/infra-manifest/external-secrets/`)
@@ -37,22 +52,15 @@ KV=kv-scouterna-webservices
 az keyvault secret list --vault-name $KV --query "[].name" -o tsv   # what's already there
 ```
 
-Create the secrets that are missing (random values where noted):
+Create the secrets that are missing (random values where noted; the GitHub
+client secret is the real value from A1):
 
 ```bash
 az keyvault secret set --vault-name $KV --name minio-root-user            --value admin
 az keyvault secret set --vault-name $KV --name minio-root-password        --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KV --name grafana-admin-password     --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
-az keyvault secret set --vault-name $KV --name grafana-github-client-secret --value "<github-oauth-app-client-secret>"   # from A3
+az keyvault secret set --vault-name $KV --name grafana-github-client-secret --value "<client-secret-from-A1>"
 ```
-
-> **`grafana-github-client-secret` comes from the GitHub OAuth app in A3**, which
-> you reach later. You don't need it to bring the cluster up — set a placeholder
-> now and overwrite it after A3 (ESO picks up the new version on its next
-> refresh). The only thing that stays broken until then is Grafana's GitHub
-> login; everything else, including the break-glass admin password, works. The
-> `grafana-github-oauth` `ExternalSecret` must still exist for Grafana to start,
-> so do set *some* value here, even a placeholder.
 
 The `ExternalSecret`s then produce the in-cluster secrets consumers expect:
 `minio-root`, `loki-minio`, `thanos-objstore` (composed from the MinIO values),
@@ -68,58 +76,85 @@ in-cluster secrets by hand.
 > **self-heals** the instant ESO reconciles the value from the Key Vault. Nothing
 > to babysit — and a rebuild recreates every secret automatically from KV.
 
-### A2. Fill the client-id placeholders
-
-Two ArgoCD Applications carry `<...>` placeholders that must be set to real
-values before they sync (Azure identifiers, not secrets):
-
-- `k8s/argocd/infra-apps/external-secrets.yaml` → `<ESO_CLIENT_ID>`
-  (the ESO managed-identity client-id from doc 02).
-- `k8s/argocd/infra-apps/velero.yaml` → `<VELERO_CLIENT_ID>`,
-  `<BACKUP_STORAGE_ACCOUNT>`, `<SUBSCRIPTION_ID>`, `<NODE_RESOURCE_GROUP>`
-  (from A4). Also edit the `ClusterSecretStore` vault URL in
-  `k8s/infra-manifest/external-secrets/clustersecretstore.yaml`.
-
-### A3. Grafana GitHub OAuth app
-
-Daily Grafana login is **GitHub OAuth**, restricted to the **Scouterna** org,
-with GitHub teams → Grafana roles (config in `kube-prometheus-stack-values.yaml`,
-`grafana.ini` `auth.github`). The admin password is **break-glass only**.
-
-1. Create a **GitHub OAuth App** (Scouterna org → Settings → Developer settings →
-   OAuth Apps): Homepage `https://grafana.wsinfra.scouterna.net`, callback
-   `https://grafana.wsinfra.scouterna.net/login/github`.
-2. Put the **Client ID** in `grafana.ini` `auth.github.client_id`
-   (`<GITHUB_CLIENT_ID>` in the values).
-3. Put the **Client Secret** in Key Vault as `grafana-github-client-secret`
-   (or in the `grafana-github-oauth` secret seeded in A1).
-4. Set `role_attribute_path` to the real Scouterna team slugs.
-
-### A4. Azure prerequisites for backups (Velero + CNPG)
+### A3. Azure prerequisites for backups (Velero + CNPG)
 
 Backups go to a durable, external storage account (see
 `infra/backup-storage.bicep`), created once in the `webservices-infra` RG. These
 are `az` steps ArgoCD can't do. See `docs/maintenance.md` and the onboarding doc
 for the CNPG per-project flow; the Velero identity setup:
 
+The `ACCOUNT` variable below is the durable backup storage account —
+`stwsv2backup` for this deployment (it's used in three of the commands, so it's
+set once). Storage account names are **globally unique, 3–24 chars, lowercase
+alphanumeric only** (no hyphens), so a fresh deployment needs a distinctive name.
+Because the account lives in the durable RG it usually **already exists** on a
+rebuild — the deployment is then idempotent (safe to re-run) and the `az identity
+create` below will say the identity already exists, which is fine.
+
 ```bash
+ACCOUNT=stwsv2backup            # the durable backup storage account (used 3× below)
+FEDCRED=velero-webservices-v2   # name for Velero's federated credential — one per
+                                # cluster, your choice (e.g. velero-<cluster-name>)
+CLUSTER_RG=webservices-v2       # the CLUSTER's resource group (doc 01) — note this
+                                # differs from the durable webservices-infra RG below
+CLUSTER=webservices-v2          # the cluster name (doc 01)
+
 az deployment group create -g webservices-infra \
-  -f infra/backup-storage.bicep -p storageAccountName=<account>
+  -f infra/backup-storage.bicep -p storageAccountName=$ACCOUNT
 
 az identity create -g webservices-infra -n id-velero-webservices -l swedencentral
 PRINCIPAL=$(az identity show -g webservices-infra -n id-velero-webservices --query principalId -o tsv)
-STORAGE_ID=$(az storage account show -g webservices-infra -n <account> --query id -o tsv)
+STORAGE_ID=$(az storage account show -g webservices-infra -n $ACCOUNT --query id -o tsv)
 az role assignment create --assignee-object-id "$PRINCIPAL" --assignee-principal-type ServicePrincipal \
   --role "Storage Blob Data Contributor" --scope "$STORAGE_ID"   # data plane
 az role assignment create --assignee-object-id "$PRINCIPAL" --assignee-principal-type ServicePrincipal \
   --role "Reader" --scope "$STORAGE_ID"                          # mgmt plane (REQUIRED)
+
+# Same OIDC issuer used for the ESO federated credential in doc 02 step 3.
+ISSUER=$(az aks show -g $CLUSTER_RG -n $CLUSTER --query oidcIssuerProfile.issuerUrl -o tsv)
 az identity federated-credential create -g webservices-infra --identity-name id-velero-webservices \
-  -n velero-<cluster> --issuer "<cluster oidc issuer from doc 01>" \
+  -n $FEDCRED --issuer "$ISSUER" \
   --subject "system:serviceaccount:velero:velero" --audiences "api://AzureADTokenExchange"
 ```
 > **Note:** the Velero identity needs **both** `Storage Blob Data Contributor`
 > **and** `Reader`. With only the data-plane role the BackupStorageLocation
 > validates as Available but backups stall on a silent 403.
+
+### A4. Fill the placeholders, then commit + push
+
+First gather the values the manifests need (the ESO and GitHub client-ids come
+from doc 02 and A1; the rest are read back here):
+
+```bash
+ESO_CLIENT_ID=$(az identity show -g webservices-infra -n id-eso-webservices --query clientId -o tsv)
+VELERO_CLIENT_ID=$(az identity show -g webservices-infra -n id-velero-webservices --query clientId -o tsv)
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+NODE_RESOURCE_GROUP=$(az aks show -g $CLUSTER_RG -n $CLUSTER --query nodeResourceGroup -o tsv)
+# BACKUP_STORAGE_ACCOUNT is $ACCOUNT (stwsv2backup); GITHUB_CLIENT_ID is from the A1 OAuth app;
+# KEY_VAULT_NAME is your durable vault (kv-scouterna-webservices).
+```
+
+Now fill the `<...>` placeholders in the manifests with the values above (the
+`<PLACEHOLDER>` in each file takes the matching `$PLACEHOLDER`). They are Azure
+identifiers, not secrets — safe to commit:
+
+- `k8s/argocd/infra-apps/external-secrets.yaml` → `<ESO_CLIENT_ID>` = `$ESO_CLIENT_ID`.
+- `k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml` →
+  `<GITHUB_CLIENT_ID>` = the Client ID from the A1 OAuth app.
+- `k8s/argocd/infra-apps/velero.yaml` → `<VELERO_CLIENT_ID>` = `$VELERO_CLIENT_ID`,
+  `<BACKUP_STORAGE_ACCOUNT>` = `$ACCOUNT`, `<SUBSCRIPTION_ID>` = `$SUBSCRIPTION_ID`,
+  `<NODE_RESOURCE_GROUP>` = `$NODE_RESOURCE_GROUP`.
+- `k8s/infra-manifest/external-secrets/clustersecretstore.yaml` → the `vaultUrl`
+  host `<KEY_VAULT_NAME>` = your durable vault (`kv-scouterna-webservices`).
+
+**Then commit and push.** ArgoCD syncs from the Git repo, not your working tree —
+an unpushed edit has no effect. Push before you apply the root app in Part B (and
+push again whenever you change a filled-in value later):
+
+```bash
+git commit -am "Fill infra client-ids / vault URL"
+git push
+```
 
 ---
 
@@ -177,7 +212,7 @@ choice.
 
 **Other infra UIs:** Headlamp uses per-developer **ServiceAccount tokens** (the
 token *is* the k8s authorization — a dev sees only their namespaces; see
-[onboarding.md](onboarding.md)). Grafana uses **GitHub OAuth** (A3).
+[onboarding.md](onboarding.md)). Grafana uses **GitHub OAuth** (A1).
 
 ---
 
@@ -187,7 +222,7 @@ token *is* the k8s authorization — a dev sees only their namespaces; see
   repository credential whose `url` scheme **matches** the Application `repoURL`
   (an `https://` repoURL needs an HTTPS/token credential, not an SSH deploy key),
   else `authentication required: Repository not found`.
-- **Put the bootstrap secrets in the Key Vault first (Part A1).** They are not in
+- **Put the bootstrap secrets in the Key Vault first (Part A2).** They are not in
   Git; ESO materializes them. If the KV values are missing, the `ExternalSecret`s
   stay `SecretSyncedError` and their consumers crash-loop until you set them.
 - **Expected non-"Synced/Healthy" that are fine:** `cloudnative-pg` shows

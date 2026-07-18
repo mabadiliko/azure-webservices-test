@@ -28,17 +28,17 @@ spec:
           - $values/k8s/infra-manifest/velero/values.yaml
         parameters:
           - name: serviceAccount.server.annotations.azure\.workload\.identity/client-id
-            value: <VELERO_CLIENT_ID>
+            value: 8d1458d7-eadf-4792-8699-d5eb6847ae80
           - name: configuration.backupStorageLocation[0].config.storageAccount
-            value: <BACKUP_STORAGE_ACCOUNT>
+            value: stwsv2backup
           - name: configuration.backupStorageLocation[0].config.resourceGroup
             value: webservices-infra
           - name: configuration.backupStorageLocation[0].config.subscriptionId
-            value: <SUBSCRIPTION_ID>
+            value: f1831dd3-3713-42ed-997f-d538ecdd960c
           - name: configuration.volumeSnapshotLocation[0].config.resourceGroup
-            value: <NODE_RESOURCE_GROUP>
+            value: MC_webservices-v2-test_webservices-v2-test_swedencentral
           - name: configuration.volumeSnapshotLocation[0].config.subscriptionId
-            value: <SUBSCRIPTION_ID>
+            value: f1831dd3-3713-42ed-997f-d538ecdd960c
     - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
       targetRevision: main
       ref: values
