@@ -49,7 +49,7 @@ grafana:
     # (GF_AUTH_GITHUB_CLIENT_SECRET__FILE above), not this file.
     auth.github:
       enabled: true
-      client_id: <GITHUB_CLIENT_ID>
+      client_id: Ov23liQDmm14U0jTCkT5
       scopes: user:email,read:org
       auth_url: https://github.com/login/oauth/authorize
       token_url: https://github.com/login/oauth/access_token
