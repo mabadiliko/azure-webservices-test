@@ -15,12 +15,12 @@ kind: Job
 metadata:
   name: minio-create-buckets
   namespace: minio
-  annotations:
-    # Run as an ArgoCD sync hook and replace the previous Job each sync — a Job's
-    # pod template is immutable, so recreating it is how re-runs work on rebuilds.
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
+  # ArgoCD manages this as a normal resource (not a hook). The completed Job is
+  # left in place — ArgoCD reads Job "Complete" as Healthy and stays Synced, no
+  # churn. On a rebuild it's a fresh cluster; if the spec ever changes, the app's
+  # Replace=true recreates the (immutable) Job. The mc commands are idempotent
+  # (`mb --ignore-existing`), so a re-run is always safe.
   backoffLimit: 10
   template:
     metadata:

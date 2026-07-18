@@ -30,3 +30,6 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      # A Job's pod template is immutable; Replace=true lets a changed spec
+      # recreate the Job instead of failing on an in-place update.
+      - Replace=true
