@@ -200,6 +200,26 @@ kubectl -n argocd get applications                       # sync/health of every 
 kubectl -n traefik get svc traefik                       # note EXTERNAL-IP (the LB public IP)
 kubectl -n velero get backupstoragelocation default      # -> Available
 ```
+
+Give it a few minutes and re-run `get applications` — apps should progress to
+`Synced`/`Healthy` wave by wave. **If some don't come up, the first thing to
+check is that every A4 placeholder was filled, in the right file, with the right
+value** (all four files — it's easy to fill the client-ids and miss the `vaultUrl`
+in `clustersecretstore.yaml`). A left-over `<...>` there is the most common cause
+of a stalled bring-up. Watch out for one misleading symptom: the
+`ClusterSecretStore` can report `Ready`/`store validated` while still pointing at a
+placeholder vault — Workload-Identity validation doesn't do a live fetch — so the
+`ExternalSecret`s fail with `SecretSyncedError` ("could not get secret data from
+provider") even though the store looks healthy. Check the store's `vaultUrl`:
+
+```bash
+kubectl get clustersecretstore azure-kv -o jsonpath='{.spec.provider.azurekv.vaultUrl}{"\n"}'
+kubectl get externalsecrets -A     # READY should become True once the URL is real
+```
+After correcting a value, commit + push, then let ArgoCD re-sync (or
+`kubectl -n external-secrets rollout restart deploy/external-secrets` to force ESO
+to re-evaluate the store immediately).
+
 Point the infra-app DNS (`*.<host>`, e.g. `*.wsinfra.scouterna.net`) at the
 Traefik LoadBalancer IP.
 

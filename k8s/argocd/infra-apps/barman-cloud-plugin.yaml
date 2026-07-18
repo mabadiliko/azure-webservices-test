@@ -22,11 +22,12 @@ spec:
   source:
     repoURL: https://github.com/cloudnative-pg/plugin-barman-cloud
     targetRevision: v0.13.0
+    # kubernetes/ is a kustomize base. Do NOT set `directory:` here — that forces
+    # ArgoCD to apply the folder as raw YAML, which tries to apply the
+    # kustomization.yaml itself as a Kustomization object and fails
+    # ("could not find kustomize.config.k8s.io/Kustomization"). With no directory
+    # block, ArgoCD auto-detects the kustomization.yaml and runs kustomize build.
     path: kubernetes
-    directory:
-      # The release also ships a flat manifest.yaml; the kubernetes/ kustomize
-      # base is the GitOps-friendly source. recurse to pick up the components.
-      recurse: true
   syncPolicy:
     automated:
       prune: true

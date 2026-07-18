@@ -24,17 +24,12 @@ resources:
 # Phase 2: migrated to an ExternalSecret from Key Vault via ESO).
 existingSecret: minio-root
 
-# Pre-create the buckets the platform needs.
-buckets:
-  - name: loki
-    policy: none
-    purge: false
-  - name: thanos
-    policy: none
-    purge: false
-  - name: velero
-    policy: none
-    purge: false
+# Buckets (loki, thanos, velero) are created by the separate `minio-buckets`
+# ArgoCD app (k8s/infra-manifest/minio-buckets/), NOT the chart's built-in
+# `buckets:` provisioning. The chart does it via a Helm post-install hook, which
+# ArgoCD maps to a PostSync hook that is skipped when MinIO can't sync cleanly on
+# first bring-up (before its ESO secret exists) — so the buckets never appear and
+# Thanos-store crash-loops. The standalone Job is reliable and idempotent.
 
 # No ingress for MinIO in the test round — accessed in-cluster only.
 # (A console/API ingress can be added later behind Traefik if needed.)
