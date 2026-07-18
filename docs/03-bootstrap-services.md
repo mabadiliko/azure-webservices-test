@@ -166,11 +166,22 @@ kubectl create namespace argocd
 # last-applied-configuration annotation size limit and a plain apply fails on it.
 kubectl apply --server-side --force-conflicts -n argocd \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.5/manifests/install.yaml
+
+# Wait for ArgoCD to be ready before applying the root app. The
+# application-controller (a StatefulSet) is what reconciles the root app, so wait
+# for it too — not just the server. Each command blocks until its rollout is done.
 kubectl -n argocd rollout status deploy/argocd-server
+kubectl -n argocd rollout status deploy/argocd-repo-server
+kubectl -n argocd rollout status statefulset/argocd-application-controller
 
 kubectl apply -f k8s/argocd/projects/            # infra + apps-dev + apps-prod
 kubectl apply -f k8s/argocd/infra-root-app.yaml  # app-of-apps; recurses infra-apps/ by sync-wave
 ```
+
+After you apply the root app, it takes a minute or two for ArgoCD to discover the
+child apps and start syncing them wave by wave — `kubectl -n argocd get applications`
+showing nothing (or apps briefly `Missing`/`OutOfSync`) in the first moments is
+normal, not a failure. Watch them progress with the verify commands below.
 
 The root app brings up every common service in dependency order:
 
