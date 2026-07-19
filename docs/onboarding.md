@@ -87,15 +87,19 @@ until you copy them to their real name. `_template/` itself is excluded.
 3. **Grant a developer access.** Copy
    `infra/serviceaccount-rbac.yaml.example` to `infra/serviceaccount-rbac.yaml`
    and fill it in:
-   - **ServiceAccount name** — use the developer's **GitHub username**,
-     lowercased. It must be a DNS-1123 label (lowercase letters, digits,
-     hyphens); a GitHub handle already satisfies this, and an email address does
-     **not** (no `@` or `.` allowed), so put the email in the annotation instead.
-     The name must be unique within the namespace.
-   - **`namespace`** — set every `namespace:` line to the namespace this
-     developer manages (e.g. `proj-scoutid`, or `proj-scoutid-dev` for a
-     dev/prod project). Repeat the RoleBinding per namespace if they need more
-     than one.
+   - **ServiceAccount name** — always the developer's **GitHub username**,
+     lowercased. GitHub usernames (alphanumerics and single hyphens) are always
+     valid ServiceAccount names, so there is no other naming rule to remember,
+     and it ties cluster access to the same identity used for the repo. The
+     email goes in the annotation (it can't be the name — `@` is invalid).
+   - **`namespace`** — the ServiceAccount is the developer's identity and lives
+     in one namespace; a RoleBinding *in* each namespace grants access there. For
+     a single-namespace project, set every `namespace:` to that namespace. For a
+     dev/prod (or +staging) project, pin the SA to one namespace (convention:
+     `-dev`) and add a RoleBinding per namespace — see the commented
+     multi-namespace block in `serviceaccount-rbac.yaml.example`, which explains
+     the two distinct namespace fields (where access is granted vs. where the SA
+     lives).
    - **access level** — ClusterRole `admin` for full control within the
      namespace, or `view` for read-only.
    - **annotations** — record the real identity (`scouterna.se/developer` =
