@@ -86,18 +86,34 @@ until you copy them to their real name. `_template/` itself is excluded.
 
 3. **Grant a developer access.** Copy
    `infra/serviceaccount-rbac.yaml.example` to `infra/serviceaccount-rbac.yaml`
-   and fill in real values (replace `DEVELOPER`; use ClusterRole `admin` for full
-   control within the namespace, or `view` for read-only). Commit — ArgoCD
-   creates the ServiceAccount + RoleBinding. Then mint a token:
+   and fill it in:
+   - **ServiceAccount name** — use the developer's **GitHub username**,
+     lowercased. It must be a DNS-1123 label (lowercase letters, digits,
+     hyphens); a GitHub handle already satisfies this, and an email address does
+     **not** (no `@` or `.` allowed), so put the email in the annotation instead.
+     The name must be unique within the namespace.
+   - **`namespace`** — set every `namespace:` line to the namespace this
+     developer manages (e.g. `proj-scoutid`, or `proj-scoutid-dev` for a
+     dev/prod project). Repeat the RoleBinding per namespace if they need more
+     than one.
+   - **access level** — ClusterRole `admin` for full control within the
+     namespace, or `view` for read-only.
+   - **annotations** — record the real identity (`scouterna.se/developer` =
+     email, `scouterna.se/github` = handle).
+
+   For a second developer, add another ServiceAccount + RoleBinding pair in the
+   same file. Commit — ArgoCD creates the ServiceAccount(s) + RoleBinding(s).
+   Then mint a token for each:
    ```bash
-   kubectl -n <project>-dev create token <developer> --duration=8760h
+   kubectl -n <namespace> create token <github-username> --duration=8760h
    ```
    Send the token to the developer. They log in at
    `https://headlamp.wsinfra.scouterna.net` (paste the token) and see only their
    namespace(s), or use it with `kubectl`.
 
-   > The token file stays a **`.example`** in the template so ArgoCD never syncs
-   > an unfilled `DEVELOPER` placeholder. Only the real, renamed file is applied.
+   > The file stays a **`.example`** in the template so ArgoCD never syncs an
+   > unfilled placeholder. Only the real, renamed `serviceaccount-rbac.yaml` is
+   > applied.
 
 4. **No ResourceQuota / LimitRange is applied.** The project owns the namespace.
 
