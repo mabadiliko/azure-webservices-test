@@ -1,0 +1,7 @@
+# Dev namespace for the project. Rename proj-scoutid to the project's name.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proj-scoutid
+  labels:
+    scouterna.se/project: proj-scoutid

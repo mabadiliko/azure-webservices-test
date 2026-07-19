@@ -1,0 +1,22 @@
+# PROD environment — stated completely. This file is the full statement of
+# prod: an image tag pinned to a release, prod host, prod issuer. Because it is
+# additive (not a Kustomize overlay), a value added to dev does NOT reach prod
+# unless it is deliberately added here too.
+name: proj-scoutid
+namespace: proj-scoutid-prod
+replicas: 2
+image:
+  repository: ghcr.io/scouterna/proj-scoutid
+  tag: "0.1.0"          # pin an explicit release for prod
+containerPort: 8080
+env: []
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+ingress:
+  enabled: true
+  host: proj-scoutid.example.se
+  clusterIssuer: letsencrypt-prod

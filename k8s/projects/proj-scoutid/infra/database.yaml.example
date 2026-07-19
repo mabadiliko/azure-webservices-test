@@ -1,0 +1,95 @@
+# Reference: a backed-up PostgreSQL cluster for a project (CloudNativePG).
+# Copy into your project's manifests and replace proj-scoutid / adjust sizing.
+#
+# Backups use the CloudNativePG **Barman Cloud Plugin** (the supported method;
+# the old spec.backup.barmanObjectStore is deprecated and removed in CNPG 1.31).
+# They go to a per-project container in the durable backup storage account
+# (stwsv2backup), authenticated with a storage-account key delivered by ESO from
+# Key Vault (Workload Identity for CNPG is a future improvement — the plugin's
+# Managed-Identity path is finicky with multiple node identities).
+#
+# Prereqs (see docs/onboarding.md → "Add a database with backups"):
+#   - the Barman Cloud Plugin is installed (infra app: barman-cloud-plugin)
+#   - a per-project container `cnpg-proj-scoutid` exists in the backup account
+#   - the storage key is in Key Vault; an ExternalSecret materializes it here
+---
+# Storage key, materialized from Key Vault by ESO (no key committed).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: proj-scoutid-backup-storage
+  namespace: proj-scoutid-prod
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-kv
+    kind: ClusterSecretStore
+  target:
+    name: backup-storage-key
+    template:
+      data:
+        AZURE_STORAGE_ACCOUNT: stwsv2backup
+        AZURE_STORAGE_KEY: "{{ .storageKey }}"
+  data:
+    - secretKey: storageKey
+      remoteRef:
+        key: backup-storage-account-key   # the KV secret holding the account key
+---
+# ObjectStore: where + how the plugin writes backups for this project.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: proj-scoutid-store
+  namespace: proj-scoutid-prod
+spec:
+  configuration:
+    destinationPath: "https://stwsv2backup.blob.core.windows.net/cnpg-proj-scoutid"
+    azureCredentials:
+      storageAccount:
+        name: backup-storage-key
+        key: AZURE_STORAGE_ACCOUNT
+      storageKey:
+        name: backup-storage-key
+        key: AZURE_STORAGE_KEY
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+  retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: proj-scoutid-db
+  namespace: proj-scoutid-prod
+spec:
+  instances: 2                     # 1 for dev; 2+ for prod HA
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  storage:
+    size: 16Gi                     # exact Azure SSD tier (E3). Size to a tier.
+    storageClass: disk-standardssd
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: proj-scoutid-store
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+---
+# Scheduled base backups (WAL archiving is continuous once configured).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: proj-scoutid-db-daily
+  namespace: proj-scoutid-prod
+spec:
+  schedule: "0 0 1 * * *"          # 01:00 daily (CNPG uses 6-field cron)
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: proj-scoutid-db
