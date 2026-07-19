@@ -19,7 +19,9 @@ metadata:
 spec:
   description: Infra-owned per-project resources (namespace, RBAC, shared DBs)
   sourceRepos:
-    - 'https://github.com/*'      # tighten to the specific org/repo once the slug is confirmed
+    # NOTE: globstar (**) is required — a single * does not match across '/', so
+    # 'https://github.com/*' would NOT match 'https://github.com/org/repo.git'.
+    - 'https://github.com/**'     # tighten to the specific org/repo once the slug is confirmed
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc
