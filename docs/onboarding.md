@@ -56,13 +56,30 @@ until you copy them to their real name. `_template/` itself is excluded.
 
 2. **Choose the namespace(s).** The template ships `namespace-dev.yaml` and
    `namespace-prod.yaml` as the common case, but the set is **flexible** — the
-   ApplicationSet syncs *any* `infra/namespace-*.yaml`:
-   - a small project may keep just one (rename to e.g. `namespace.yaml` and drop
-     the `-dev`/`-prod` suffix on the namespace name);
-   - a project needing staging adds `namespace-staging.yaml`.
+   ApplicationSet syncs `infra/namespace.yaml` **and** any
+   `infra/namespace-*.yaml`. Add or delete files to match what the project needs:
 
-   Delete or add files to match. Then **commit** — ArgoCD creates the
-   namespaces. Confirm:
+   - **dev + prod (default):** keep both files as-is.
+   - **one namespace only:** delete `namespace-prod.yaml`, rename
+     `namespace-dev.yaml` to `namespace.yaml`, and inside it set the namespace
+     `name` to just `<project>` (drop the `-dev` suffix) and remove the
+     `scouterna.se/env` label. For example, `proj-scoutid`:
+     ```yaml
+     # Namespace for proj-scoutid.
+     apiVersion: v1
+     kind: Namespace
+     metadata:
+       name: proj-scoutid
+       labels:
+         scouterna.se/project: proj-scoutid
+     ```
+   - **add staging:** copy a namespace file to `namespace-staging.yaml` and set
+     its `name`/`env` accordingly.
+
+   > Filenames must be `namespace.yaml` or `namespace-<something>.yaml` — that is
+   > what the ApplicationSet's include glob matches.
+
+   Then **commit** — ArgoCD creates the namespace(s). Confirm:
    ```bash
    kubectl get ns -l scouterna.se/project=<project>
    ```
