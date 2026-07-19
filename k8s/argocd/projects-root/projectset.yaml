@@ -41,7 +41,9 @@ spec:
         directory:
           recurse: false
           # Only apply real manifests; skip the *.example reference files.
-          include: '{namespace-*.yaml,serviceaccount-rbac.yaml,database.yaml}'
+          # namespace.yaml covers a single-namespace project; namespace-*.yaml
+          # covers dev/prod/staging etc.
+          include: '{namespace.yaml,namespace-*.yaml,serviceaccount-rbac.yaml,database.yaml}'
       destination:
         server: https://kubernetes.default.svc
       syncPolicy:

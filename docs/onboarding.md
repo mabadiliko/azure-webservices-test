@@ -35,12 +35,22 @@ until you copy them to their real name. `_template/` itself is excluded.
 ## A. Namespace + developer access
 
 1. **Copy the template and name it.** Copy `k8s/projects/_template/` to
-   `k8s/projects/<project>/`. `PROJECT` is a placeholder in several files;
-   replace every occurrence at once:
+   `k8s/projects/<project>/`, where `<project>` is your project's name. `PROJECT`
+   is a placeholder inside several of the files; replace every occurrence at once.
+   Run this **from the repo root**, substituting your project name in **both**
+   places (the path to edit, and the replacement text):
    ```bash
-   grep -rlZ PROJECT k8s/projects/<project>/ \
-     | xargs -0 sed -i "s/PROJECT/<project>/g"
+   # template form — replace <project> in both spots with your project name:
+   grep -rlZ PROJECT k8s/projects/<project>/ | xargs -0 sed -i "s/PROJECT/<project>/g"
    ```
+   For example, for a project named `proj-scoutid`:
+   ```bash
+   grep -rlZ PROJECT k8s/projects/proj-scoutid/ | xargs -0 sed -i "s/PROJECT/proj-scoutid/g"
+   ```
+   This finds every file under your project dir that contains `PROJECT` and
+   replaces it in place — including the `chart/` and `.example` files, so they're
+   ready when you activate them later.
+
    (`DEVELOPER` in `serviceaccount-rbac.yaml.example` is a separate placeholder —
    leave it; fill it in per developer in step 3.)
 
