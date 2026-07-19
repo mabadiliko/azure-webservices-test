@@ -5,7 +5,7 @@
 # account, so each project's Postgres backups are isolated in their own
 # container. Auth is via the storage-account key (delivered to the cluster by
 # ESO from Key Vault) — see the reference manifest in
-# k8s/projects/_template/chart/postgres-cluster.yaml.example.
+# k8s/projects/_template/infra/database.yaml.example.
 #
 # (Workload Identity for CNPG backups is a future improvement; the plugin's
 # Managed-Identity path is currently finicky with multiple node identities.)

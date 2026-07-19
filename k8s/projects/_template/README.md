@@ -1,28 +1,40 @@
 # Project onboarding template
 
-Copy this directory to `k8s/projects/<project>/` to onboard a project. Two
-independent parts:
+Copy this directory to `k8s/projects/<project>/` to onboard a project, then
+replace the `PROJECT` placeholder everywhere:
 
-## A. Namespace + developer access (always)
+```bash
+grep -rlZ PROJECT k8s/projects/<project>/ | xargs -0 sed -i "s/PROJECT/<project>/g"
+```
 
-Projects own their namespace(s). Create them and grant a developer a
-namespace-scoped ServiceAccount token (pasted into Headlamp or used with
-kubectl). See `docs/onboarding.md` for the full flow. Files here:
+See [`docs/onboarding.md`](../../../docs/onboarding.md) for the full flow. In
+brief, two layers:
 
-- `namespace-dev.yaml`, `namespace-prod.yaml` — the project's namespace(s).
-- `serviceaccount-rbac.yaml` — a SA + RoleBinding (clusterrole `admin` within
-  the namespace) per developer. Duplicate per developer / adjust to `view`.
+## `infra/` — infra-owned, auto-applied by ArgoCD
+
+Resources a project cannot create for itself. An ApplicationSet watches
+`k8s/projects/*/infra/` and syncs these on commit — **no manual kubectl**:
+
+- `namespace-dev.yaml`, `namespace-prod.yaml` — the project's namespace(s). The
+  set is flexible: keep one, use dev+prod, or add `namespace-staging.yaml`. Any
+  `namespace-*.yaml` here is synced.
+- `serviceaccount-rbac.yaml.example` — a per-developer SA + RoleBinding
+  (clusterrole `admin` within the namespace, or `view`). Copy to
+  `serviceaccount-rbac.yaml` and fill in real names to activate it; the
+  `.example` is never synced (so an unfilled `DEVELOPER` placeholder can't leak
+  in).
+- `database.yaml.example` — optional CloudNativePG `Cluster` + backups. Copy to
+  `database.yaml` to activate.
 
 No ResourceQuota or LimitRange is applied by default — the platform monitors
-usage and only intervenes reactively (see `k8s/infra-manifest/cluster-infra/monitor-limits/`).
+usage and only intervenes reactively (see
+`k8s/infra-manifest/cluster-infra/monitor-limits/`).
 
-## B. Optional ArgoCD registration (Helm-per-environment)
+## `chart/` — the project's own workload (optional GitOps)
 
-If the project wants GitOps, fill in `chart/` (one chart) plus
+Never auto-synced. If the project wants GitOps, fill in `chart/` plus
 `values-dev.yaml` and `values-prod.yaml` — one values file per environment,
-each stating that environment completely. This is deliberately NOT Kustomize
-overlays: values are additive, so a dev value can't leak into prod by omission.
-
-Then add an ArgoCD `Application` (project `apps-dev` / `apps-prod`) pointing at
-this chart with the right values file. A project may instead just
-`helm install` with its SA token and never touch ArgoCD — registration is optional.
+each stating that environment completely (additive, NOT Kustomize overlays, so
+a dev value can't leak into prod by omission). Then add an ArgoCD `Application`
+under project `apps-dev` / `apps-prod`. A project may instead just `helm install`
+with its SA token and never touch ArgoCD — registration is optional.
