@@ -1,0 +1,56 @@
+# ApplicationSet that auto-discovers projects and deploys their INFRA-OWNED
+# resources (namespace, developer RBAC, opt-in shared DB) — the things a project
+# cannot create for itself.
+#
+# Onboarding a project becomes: copy k8s/projects/_template/ to
+# k8s/projects/<project>/, fill in the name, commit. This ApplicationSet finds
+# the new <project>/infra/ directory and generates an Application that syncs it.
+# No hand-applied kubectl.
+#
+# It manages ONLY the infra/ subdirectory. A project's own workload under
+# chart/ is never swept up here — that stays opt-in via a separate Application
+# under apps-dev/apps-prod.
+#
+# Apply once at bootstrap (kubectl apply -f); self-manages thereafter.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: project-infra
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+        revision: main
+        directories:
+          - path: k8s/projects/*/infra
+          - path: k8s/projects/_template/infra
+            exclude: true
+  template:
+    metadata:
+      # path[1] is the <project> segment of k8s/projects/<project>/infra
+      name: 'project-infra-{{index .path.segments 2}}'
+    spec:
+      project: project-infra
+      source:
+        repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+        targetRevision: main
+        path: '{{.path.path}}'
+        directory:
+          recurse: false
+          # Only apply real manifests; skip the *.example reference files.
+          include: '{namespace-*.yaml,serviceaccount-rbac.yaml,database.yaml}'
+      destination:
+        server: https://kubernetes.default.svc
+      syncPolicy:
+        automated:
+          # selfHeal keeps the cluster matching git; prune is OFF so removing a
+          # project's dir from git does NOT auto-delete a live namespace and all
+          # its data — infra deletes namespaces deliberately.
+          selfHeal: true
+          prune: false
+        syncOptions:
+          - CreateNamespace=false   # the namespace-*.yaml IS the namespace
+          - ServerSideApply=true

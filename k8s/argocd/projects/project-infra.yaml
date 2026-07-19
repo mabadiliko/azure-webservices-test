@@ -1,0 +1,40 @@
+# AppProject for the INFRA-OWNED per-project resources (namespace, developer
+# RBAC, and opt-in shared services like a CloudNativePG database).
+#
+# This is the privileged boundary: the ApplicationSet in k8s/argocd/projects-root/
+# generates one Application per project (from k8s/projects/<project>/infra/) that
+# runs under THIS project. A project's OWN workload runs under apps-dev/apps-prod
+# instead, which cannot create namespaces, RBAC, databases, or ExternalSecrets.
+#
+# Blast radius is deliberately wider than apps-dev/apps-prod (it must create
+# Namespaces + cluster-scoped RBAC bindings + CNPG clusters) but is still infra-
+# owned: only files committed under k8s/projects/*/infra/ land here.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-infra
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Infra-owned per-project resources (namespace, RBAC, shared DBs)
+  sourceRepos:
+    - 'https://github.com/*'      # tighten to the specific org/repo once the slug is confirmed
+  destinations:
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  # Cluster-scoped resources these Applications may manage.
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+  # Namespaced resources. RoleBinding/ServiceAccount for developer access;
+  # CNPG + ExternalSecret for the opt-in shared database.
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ServiceAccount
+    - group: 'rbac.authorization.k8s.io'
+      kind: RoleBinding
+    - group: 'postgresql.cnpg.io'
+      kind: '*'
+    - group: 'external-secrets.io'
+      kind: ExternalSecret

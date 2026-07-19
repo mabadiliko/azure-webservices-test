@@ -1,0 +1,8 @@
+# Prod namespace for group-trollbacken.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: group-trollbacken-prod
+  labels:
+    scouterna.se/project: group-trollbacken
+    scouterna.se/env: prod

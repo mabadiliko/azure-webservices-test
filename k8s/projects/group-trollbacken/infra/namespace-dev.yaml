@@ -1,0 +1,8 @@
+# Dev namespace for group-trollbacken.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: group-trollbacken-dev
+  labels:
+    scouterna.se/project: group-trollbacken
+    scouterna.se/env: dev
