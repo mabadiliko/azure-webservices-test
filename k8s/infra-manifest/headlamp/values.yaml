@@ -8,8 +8,15 @@ replicaCount: 1
 # where a RoleBinding grants their OIDC username (kind: User = the GitHub login).
 config:
   oidc:
+    # Use the ESO-managed secret headlamp-oidc as an EXTERNAL secret (Option 3
+    # in the chart). This is the mode that envFrom-loads clientID/clientSecret/
+    # issuerURL/scopes from an existing secret. NOTE: `secret.create: false`
+    # alone (Option 1) does NOT wire the existing secret — it expects inline
+    # values — so externalSecret.enabled is required here.
     secret:
       create: false
+    externalSecret:
+      enabled: true
       name: headlamp-oidc
     callbackURL: https://headlamp.wsv2test.j26.se/oidc-callback
 
