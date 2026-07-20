@@ -1,5 +1,18 @@
 replicaCount: 1
 
+# OIDC SSO via Dex (which fronts GitHub). Developers log in with their GitHub
+# identity instead of pasting a ServiceAccount token. The clientID / clientSecret
+# / issuerURL / scopes come from the existing secret `headlamp-oidc`, assembled
+# by ESO from Key Vault (see k8s/infra-manifest/external-secrets/headlamp-secrets.yaml).
+# Authorization is still Kubernetes RBAC: a logged-in user sees only namespaces
+# where a RoleBinding grants their OIDC username (kind: User = the GitHub login).
+config:
+  oidc:
+    secret:
+      create: false
+      name: headlamp-oidc
+    callbackURL: https://headlamp.wsv2test.j26.se/oidc-callback
+
 ingress:
   enabled: true
   ingressClassName: traefik
