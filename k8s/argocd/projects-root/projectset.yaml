@@ -43,7 +43,7 @@ spec:
           # Only apply real manifests; skip the *.example reference files.
           # namespace.yaml covers a single-namespace project; namespace-*.yaml
           # covers dev/prod/staging etc.
-          include: '{namespace.yaml,namespace-*.yaml,serviceaccount-rbac.yaml,database.yaml}'
+          include: '{namespace.yaml,namespace-*.yaml,developer-rbac.yaml,database.yaml}'
       destination:
         server: https://kubernetes.default.svc
       syncPolicy:

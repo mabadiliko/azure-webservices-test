@@ -1,0 +1,42 @@
+# Per-developer namespace access for group-trollbacken.
+#
+# Developers authenticate via GitHub SSO (Dex + AKS structured auth), so a
+# developer IS their GitHub identity — there is NO ServiceAccount and NO token.
+# Access is granted by binding their OIDC user into each namespace they manage.
+#
+# The OIDC username is `aks:jwt:<github-login>` (the JWTAuthenticator maps the
+# GitHub login via the aks:jwt: prefix). Use ClusterRole `admin` for full
+# control within the namespace, or `view` for read-only.
+#
+# Add a RoleBinding per (developer, namespace). For another developer or
+# namespace, copy a block and change the name/namespace.
+---
+# zyberit — admin in group-trollbacken-dev
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zyberit-admin
+  namespace: group-trollbacken-dev
+subjects:
+  - kind: User
+    name: "aks:jwt:zyberit"
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io
+---
+# zyberit — admin in group-trollbacken-prod
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zyberit-admin
+  namespace: group-trollbacken-prod
+subjects:
+  - kind: User
+    name: "aks:jwt:zyberit"
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io
