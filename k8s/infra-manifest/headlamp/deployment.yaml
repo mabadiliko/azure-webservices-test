@@ -1,0 +1,70 @@
+# Headlamp — deployed as plain manifests (not the Helm chart) because the chart's
+# OIDC templating cannot take an ESO-supplied client secret without leaking it
+# into git (its args use $(VAR) which K8s won't substitute from envFrom, and its
+# `env` values schema forbids valueFrom). Plain manifests make the OIDC wiring
+# trivial: the client secret is a normal env var with valueFrom -> the ESO secret.
+#
+# OIDC provider is Dex (https://dex.wsv2test.j26.se), which fronts GitHub.
+# Authorization is Kubernetes RBAC on the user's OIDC identity (the GitHub login).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: headlamp
+  labels:
+    app.kubernetes.io/name: headlamp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: headlamp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: headlamp
+    spec:
+      serviceAccountName: headlamp
+      containers:
+        - name: headlamp
+          image: ghcr.io/headlamp-k8s/headlamp:v0.41.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-in-cluster"
+            - "-in-cluster-context-name=main"
+            - "-plugins-dir=/headlamp/plugins"
+            - "-session-ttl=86400"
+            # OIDC (Dex). Non-secret flags are literals; the client secret comes
+            # from the env var below (valueFrom the ESO-managed secret).
+            - "-oidc-client-id=headlamp"
+            - "-oidc-idp-issuer-url=https://dex.wsv2test.j26.se"
+            - "-oidc-scopes=openid,profile,email"
+            - "-oidc-callback-url=https://headlamp.wsv2test.j26.se/oidc-callback"
+            - "-oidc-client-secret=$(OIDC_CLIENT_SECRET)"
+          env:
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: headlamp-oidc
+                  key: clientSecret
+          ports:
+            - name: http
+              containerPort: 4466
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi

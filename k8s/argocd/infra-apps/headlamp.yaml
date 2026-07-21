@@ -1,4 +1,8 @@
-# Wave 3 — Headlamp (k8s web UI; SA-token login). Needs Traefik + a cert issuer.
+# Wave 3 — Headlamp (k8s web UI). Deployed as PLAIN MANIFESTS (not the Helm
+# chart) so OIDC/Dex login can take its client secret from ESO without leaking
+# it into git — see k8s/infra-manifest/headlamp/deployment.yaml for why the chart
+# couldn't. Needs Traefik + a cert issuer (wave 1), Dex (wave 2), and the
+# ESO-managed headlamp-oidc secret (external-secrets-config, wave 1).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -13,17 +17,10 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: headlamp
-  sources:
-    - repoURL: https://kubernetes-sigs.github.io/headlamp/
-      chart: headlamp
-      targetRevision: 0.41.0
-      helm:
-        releaseName: headlamp
-        valueFiles:
-          - $values/k8s/infra-manifest/headlamp/values.yaml
-    - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
-      targetRevision: main
-      ref: values
+  source:
+    repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+    targetRevision: main
+    path: k8s/infra-manifest/headlamp
   syncPolicy:
     automated:
       prune: true
