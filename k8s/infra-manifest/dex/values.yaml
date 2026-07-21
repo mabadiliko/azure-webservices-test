@@ -21,11 +21,15 @@ config:
   storage:
     type: memory   # single-replica; connectors are stateless. Revisit for HA.
 
-  # OAuth2 token lifetimes — short access tokens, refreshable.
+  # OAuth2 token lifetimes. id_tokens are short-lived but Headlamp silently
+  # refreshes them using the refresh token (see the offline_access scope on the
+  # headlamp client below) — so the login session survives well past idToken
+  # expiry, up to the refresh-token idle window.
   expiry:
-    idTokens: "10m"
+    idTokens: "24h"
     refreshTokens:
       validIfNotUsedFor: "168h"    # 7d idle window; keeps a dev logged in
+      absoluteLifetime: "720h"     # 30d hard cap
 
   oauth2:
     skipApprovalScreen: true

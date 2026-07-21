@@ -37,7 +37,10 @@ spec:
             # from the env var below (valueFrom the ESO-managed secret).
             - "-oidc-client-id=headlamp"
             - "-oidc-idp-issuer-url=https://dex.wsv2test.j26.se"
-            - "-oidc-scopes=openid,profile,email"
+            # offline_access makes Dex issue a refresh token so Headlamp can
+            # silently renew the session instead of failing when the id_token
+            # expires (otherwise: "token expired and refresh token is not set").
+            - "-oidc-scopes=openid,profile,email,offline_access"
             - "-oidc-callback-url=https://headlamp.wsv2test.j26.se/oidc-callback"
             - "-oidc-client-secret=$(OIDC_CLIENT_SECRET)"
           env:
