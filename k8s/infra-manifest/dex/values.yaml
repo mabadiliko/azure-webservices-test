@@ -55,20 +55,28 @@ config:
         # name vs slug) against a real token before binding RBAC to it.
         loadAllGroups: true
 
-  # Static clients that trust Dex. Headlamp is the first; its client secret is
+  # Static clients that trust Dex.
   # NOTE: if Headlamp login fails with a redirect_uri mismatch, the usual cause
   # is Headlamp building an http:// callback behind the https ingress (it trusts
   # X-Forwarded-Proto). Traefik sets that header by default; if needed, pin
   # Headlamp's callback explicitly rather than changing Traefik.
-  # a value we generate and also give to Headlamp (via ESO). kubectl (later,
-  # via AKS structured auth) will validate Dex tokens directly and does not need
-  # a static client entry here.
   staticClients:
     - id: headlamp
       name: Headlamp
       redirectURIs:
         - https://headlamp.wsv2test.j26.se/oidc-callback
       secretEnv: HEADLAMP_CLIENT_SECRET             # expanded from env (ESO secret)
+    # kubectl via int128/kubelogin (kubectl oidc-login). A PUBLIC client (no
+    # secret — it is a CLI on a user's laptop, can't keep one) using PKCE.
+    # kubelogin's local callback listens on 127.0.0.1; register the ports it
+    # uses (8000 default, plus a couple of fallbacks).
+    - id: kubectl
+      name: kubectl (kubelogin)
+      public: true
+      redirectURIs:
+        - http://localhost:8000
+        - http://127.0.0.1:8000
+        - http://localhost:18000
 
 # Inject the GitHub client secret and the Headlamp client secret from the
 # ESO-managed Kubernetes secret `dex-oauth` into Dex's environment, so the
