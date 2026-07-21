@@ -49,7 +49,11 @@ config:
         # Use the GitHub login (not the numeric id or name) as the username so
         # it matches our RBAC `kind: User` convention (e.g. hakan-persson).
         useLoginAsID: true
-        loadAllGroups: false
+        # Emit the user's GitHub team memberships in the `groups` claim so RBAC
+        # can grant by team (e.g. the "Webservices Infra" team -> cluster-admin).
+        # Dex renders groups as `<org>:<team>` — verify the exact string (team
+        # name vs slug) against a real token before binding RBAC to it.
+        loadAllGroups: true
 
   # Static clients that trust Dex. Headlamp is the first; its client secret is
   # NOTE: if Headlamp login fails with a redirect_uri mismatch, the usual cause
