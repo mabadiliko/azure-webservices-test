@@ -254,6 +254,69 @@ method; the classic `spec.backup.barmanObjectStore` is deprecated).
 > is a future improvement. Remember `backups.velero.io` naming does **not** apply
 > here — CNPG uses `backups.postgresql.cnpg.io`.
 
+## Namespace & PVC backups (Velero)
+
+**Every project namespace is backed up automatically — no onboarding step is
+needed.** Velero runs two schedules (`k8s/infra-manifest/velero/schedules/`):
+
+| Schedule | What | When | Retention |
+|---|---|---|---|
+| `daily-projects` | every project namespace (all except infra ns), **incl. PVC data** | 02:00 daily | 14 days |
+| `weekly-full` | the whole cluster (all namespaces) as a safety net | 03:00 Sundays | 35 days |
+
+So a project asking "please back up my PVC" already has it: their namespace and
+its persistent volumes are captured daily. Backups go to the `velero` container
+in the durable backup storage account (external to the cluster).
+
+> **PVC data capture requires a `VolumeSnapshotClass`** labeled
+> `velero.io/csi-volumesnapshot-class: "true"` — provided by
+> `k8s/infra-manifest/cluster-infra/snapshotclass/disk-snapshot.yaml`. Without
+> it, backups capture namespace/object state but **not** volume contents. (The
+> weekly full backup may report `PartiallyFailed` on a few un-snapshottable
+> cluster resources — that's expected; it's a best-effort safety net.)
+
+### Restore a namespace or PVC
+
+> These are Velero's standard CSI-restore commands. They have not yet been
+> exercised against this cluster — **verify on the first real restore** and
+> correct this runbook if anything differs.
+
+Restores need the Velero CLI (`velero` — install from the Velero releases) with
+`KUBECONFIG` pointing at the cluster.
+
+1. **Find the backup** to restore from:
+   ```bash
+   velero backup get                          # list backups
+   velero backup describe <backup-name>       # what it contains
+   ```
+2. **Restore a whole namespace** (recreates its objects + PVCs from snapshots):
+   ```bash
+   velero restore create --from-backup <backup-name> \
+     --include-namespaces <project>-prod
+   ```
+3. **Restore into a different namespace** (e.g. to inspect data without
+   clobbering the live one):
+   ```bash
+   velero restore create --from-backup <backup-name> \
+     --include-namespaces <project>-prod \
+     --namespace-mappings <project>-prod:<project>-restore
+   ```
+4. **Restore only specific resources** (e.g. just PVCs):
+   ```bash
+   velero restore create --from-backup <backup-name> \
+     --include-namespaces <project>-prod \
+     --include-resources persistentvolumeclaims,persistentvolumes
+   ```
+5. **Watch it**:
+   ```bash
+   velero restore describe <restore-name>
+   velero restore logs <restore-name>
+   ```
+
+> Velero does not overwrite existing resources by default — to restore over a
+> live namespace you typically delete the target objects first, or restore into
+> a mapped namespace and swap. Test the exact flow before relying on it.
+
 ## Removing a project
 
 The ApplicationSet runs with **prune disabled** for exactly one reason: removing
