@@ -12,8 +12,9 @@ Onboarding has two layers, split by who is allowed to do what:
   database. These live in `k8s/projects/<project>/infra/` and are applied
   **automatically by ArgoCD** — the infra team just commits the files.
 - **Layer 2 — the project's own workload** (its Deployment, Ingress, …). The
-  project runs this itself with its access token, and *optionally* registers it
-  with ArgoCD. Infra does not touch it.
+  project runs this itself (with `kubectl`/`helm` as their GitHub identity, see
+  [developer access](#b-developer-access-github-sso)), and *optionally* registers
+  it with ArgoCD. Infra does not touch it.
 
 The whole point of Layer 1 being GitOps: on a long-lived shared cluster with
 maintainers coming and going, Git is the source of truth. What's committed is
@@ -28,11 +29,12 @@ ArgoCD `Application` that syncs that project's `infra/` folder under the
 `project-infra` AppProject. So **committing a project's `infra/` files is what
 deploys them** — there is no `kubectl apply` step.
 
-It syncs only real manifests: `namespace-*.yaml`, `serviceaccount-rbac.yaml`,
-and `database.yaml`. The `*.example` files shipped by the template are ignored
-until you copy them to their real name. `_template/` itself is excluded.
+It syncs only real manifests: `namespace.yaml` / `namespace-*.yaml`,
+`developer-rbac.yaml`, and `database.yaml`. The `*.example` files shipped by the
+template are ignored until you copy them to their real name. `_template/` itself
+is excluded.
 
-## A. Namespace + developer access
+## A. Create the project and its namespace(s)
 
 1. **Copy the template and name it.** Copy `k8s/projects/_template/` to
    `k8s/projects/<project>/`, where `<project>` is your project's name. `PROJECT`
@@ -51,8 +53,8 @@ until you copy them to their real name. `_template/` itself is excluded.
    replaces it in place — including the `chart/` and `.example` files, so they're
    ready when you activate them later.
 
-   (`DEVELOPER` in `serviceaccount-rbac.yaml.example` is a separate placeholder —
-   leave it; fill it in per developer in step 3.)
+   (`GITHUB_LOGIN` in `developer-rbac.yaml.example` is a separate placeholder —
+   leave it; it's filled per developer in [section B](#b-developer-access-github-sso).)
 
 2. **Choose the namespace(s).** The template ships `namespace-dev.yaml` and
    `namespace-prod.yaml` as the common case, but the set is **flexible** — the
@@ -84,47 +86,82 @@ until you copy them to their real name. `_template/` itself is excluded.
    kubectl get ns -l scouterna.se/project=<project>
    ```
 
-3. **Grant a developer access.** Copy
-   `infra/serviceaccount-rbac.yaml.example` to `infra/serviceaccount-rbac.yaml`
-   and fill it in:
-   - **ServiceAccount name** — always the developer's **GitHub username**,
-     lowercased. GitHub usernames (alphanumerics and single hyphens) are always
-     valid ServiceAccount names, so there is no other naming rule to remember,
-     and it ties cluster access to the same identity used for the repo. The
-     email goes in the annotation (it can't be the name — `@` is invalid).
-   - **`namespace`** — the ServiceAccount is the developer's identity and lives
-     in one namespace; a RoleBinding *in* each namespace grants access there. For
-     a single-namespace project, set every `namespace:` to that namespace. For a
-     dev/prod (or +staging) project, pin the SA to one namespace (convention:
-     `-dev`) and add a RoleBinding per namespace — see the commented
-     multi-namespace block in `serviceaccount-rbac.yaml.example`, which explains
-     the two distinct namespace fields (where access is granted vs. where the SA
-     lives).
-   - **access level** — ClusterRole `admin` for full control within the
-     namespace, or `view` for read-only.
-   - **annotations** — record the real identity (`scouterna.se/developer` =
-     email, `scouterna.se/github` = handle).
+2. **No ResourceQuota / LimitRange is applied.** The project owns the namespace.
 
-   For a second developer, add another ServiceAccount + RoleBinding pair in the
-   same file. Commit — ArgoCD creates the ServiceAccount(s) + RoleBinding(s).
-   Then mint a token for each:
+## B. Developer access (GitHub SSO)
+
+Developers authenticate with their **GitHub identity** via SSO (Dex fronts
+GitHub; the cluster's API server trusts Dex). A developer *is* their GitHub
+login — there is **no ServiceAccount and no token to hand out**. Two things gate
+access:
+
+1. **Membership in the Scouterna GitHub org** — Dex rejects anyone outside it, so
+   a developer must be an org member before they can log in at all.
+2. **A RoleBinding** the infra team commits, binding the developer's OIDC
+   identity into the namespace(s) they should manage.
+
+The OIDC username is `aks:jwt:<github-login>` (the login, lowercased, with an
+`aks:jwt:` prefix). **Infra-team members** are handled separately: membership in
+the `Webservices Infra` GitHub team grants cluster-admin cluster-wide — they do
+**not** need per-project RoleBindings.
+
+### Grant a project developer access
+
+Copy `infra/developer-rbac.yaml.example` to `infra/developer-rbac.yaml` and fill
+it in:
+
+- **the user name** — `aks:jwt:<github-login>` (replace `GITHUB_LOGIN` with the
+  developer's GitHub username, lowercased). The RoleBinding name conventionally
+  follows the login too (`<github-login>-admin`).
+- **`namespace`** — one RoleBinding **per namespace** the developer should
+  access. A single-namespace project needs one; a dev/prod project needs one in
+  each (copy the block, change `namespace`).
+- **access level** — ClusterRole `admin` for full control within the namespace,
+  or `view` for read-only.
+
+For a second developer, add another RoleBinding block. **Commit** — ArgoCD
+creates the RoleBinding(s). Confirm:
+```bash
+kubectl auth can-i create deployments -n <namespace> --as="aks:jwt:<github-login>"
+```
+
+> The file stays a **`.example`** in the template so ArgoCD never syncs an
+> unfilled `GITHUB_LOGIN` placeholder. Only the real, renamed
+> `developer-rbac.yaml` is applied.
+
+### How a developer logs in
+
+**Headlamp (web UI):** browse to `https://headlamp.wsinfra.scouterna.net`, click
+**Sign in**, authenticate with GitHub. They see only the namespaces their
+RoleBindings grant.
+
+**kubectl / helm (CLI):** one-time setup, then it's transparent:
+
+1. Install the `kubectl oidc-login` plugin ([int128/kubelogin][kubelogin] — note
+   this is **not** the Azure `kubelogin`):
    ```bash
-   kubectl -n <namespace> create token <github-username> --duration=8760h
+   kubectl krew install oidc-login          # if you have krew
    ```
-   Send the token to the developer. They log in at
-   `https://headlamp.wsinfra.scouterna.net` (paste the token) and see only their
-   namespace(s), or use it with `kubectl`.
+   No krew? Download the release binary for your OS from the [kubelogin
+   releases][kubelogin] and put it on your `PATH` as `kubectl-oidc_login`
+   (kubectl discovers `kubectl-<name>` binaries as the `kubectl <name>` plugin).
+2. Get the shared **OIDC kubeconfig** from the infra team (or the repo). It
+   contains no secrets — the cluster address, the public CA, and an `exec` block
+   that runs `kubectl oidc-login` against Dex. It is **identical for every
+   developer**; identity is established at login time.
+3. Run any `kubectl` command. The first one opens a browser for GitHub login;
+   the token is then cached and silently refreshed (a browser login roughly
+   weekly). Example:
+   ```bash
+   kubectl get pods -n <namespace>          # works within granted namespaces
+   ```
 
-   > The file stays a **`.example`** in the template so ArgoCD never syncs an
-   > unfilled placeholder. Only the real, renamed `serviceaccount-rbac.yaml` is
-   > applied.
+[kubelogin]: https://github.com/int128/kubelogin
 
-4. **No ResourceQuota / LimitRange is applied.** The project owns the namespace.
-
-## B. The project's own workload (optional ArgoCD registration)
+## C. The project's own workload (optional ArgoCD registration)
 
 Layer 2 is the project's choice — it can just `helm install` / `kubectl apply`
-with its token and never touch ArgoCD. If it wants GitOps:
+as their GitHub identity and never touch ArgoCD. If it wants GitOps:
 
 1. Fill in `k8s/projects/<project>/chart/` plus `values-dev.yaml` and
    `values-prod.yaml` — one values file per environment, each stating that
