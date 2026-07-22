@@ -1,30 +1,50 @@
-# Per-developer namespace access. Copy this to developer-rbac.yaml (drop the
+# Developer / team access for this project. Copy to developer-rbac.yaml (drop the
 # .example) to activate it — the .example is never synced.
 #
 # Developers authenticate via GitHub SSO (Dex + AKS structured auth): a developer
 # IS their GitHub identity. There is NO ServiceAccount and NO token to hand out.
-# Access = a RoleBinding binding their OIDC user into each namespace.
+# Access = a RoleBinding binding a GitHub identity into each namespace. Two kinds
+# of subject, and you can mix both in this file:
 #
-# The OIDC username is `aks:jwt:<github-login>` (JWTAuthenticator prefixes the
-# GitHub login). Use ClusterRole `admin` for full control within the namespace,
-# or `view` for read-only. Add one RoleBinding per (developer, namespace); the
-# developer needs one binding in EACH namespace they should access.
+#   - kind: Group  "aks:jwt:<org>:<Team Display Name>"  — a whole GitHub TEAM
+#       RECOMMENDED for real teams: membership is then managed in GitHub (add /
+#       remove people from the team) with no cluster change or commit.
+#   - kind: User   "aks:jwt:<github-login>"             — a single developer
+#       For one-off / individual access.
 #
-# TEAM ACCESS (recommended for real project teams): instead of per-developer
-# bindings, bind a GitHub TEAM — subjects: kind: Group, name:
-# "aks:jwt:<org>:<Team Display Name>" — so membership is managed in GitHub, not
-# here. See docs/onboarding.md "Grant a whole GitHub team access".
+# Use ClusterRole `admin` for full control within the namespace, or `view` for
+# read-only. Add one RoleBinding PER NAMESPACE the team/developer should access
+# (a dev/prod project needs a binding in each). Verify the exact team string from
+# a real login's Dex log before relying on it — it uses the team's display name
+# verbatim, spaces included. See docs/onboarding.md section B.
 ---
+# TEAM access (recommended) — bind a GitHub team to this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: TEAM-team-admin
+  namespace: PROJECT               # one binding per namespace (e.g. PROJECT-prod)
+subjects:
+  - kind: Group
+    name: "aks:jwt:Scouterna:TEAM" # the GitHub team display name, verbatim
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin                      # or `view`
+  apiGroup: rbac.authorization.k8s.io
+---
+# INDIVIDUAL access — bind a single developer. Delete this block if you only use
+# team access; duplicate it per (developer, namespace) as needed.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: GITHUB_LOGIN-admin
-  namespace: PROJECT          # e.g. PROJECT-dev / PROJECT-prod for a dual-env project
+  namespace: PROJECT
 subjects:
   - kind: User
-    name: "aks:jwt:GITHUB_LOGIN"
+    name: "aks:jwt:GITHUB_LOGIN"   # the developer's GitHub login, lowercased
     apiGroup: rbac.authorization.k8s.io
 roleRef:
   kind: ClusterRole
-  name: admin
+  name: admin                      # or `view`
   apiGroup: rbac.authorization.k8s.io

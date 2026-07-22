@@ -105,69 +105,40 @@ The OIDC username is `aks:jwt:<github-login>` (the login, lowercased, with an
 the `Webservices Infra` GitHub team grants cluster-admin cluster-wide — they do
 **not** need per-project RoleBindings.
 
-### Grant a project developer access
+### Grant access
 
-Copy `infra/developer-rbac.yaml.example` to `infra/developer-rbac.yaml` and fill
-it in:
+Copy `infra/developer-rbac.yaml.example` to `infra/developer-rbac.yaml`, keep the
+block(s) you need, and fill in the names. The example ships **both** subject
+kinds; choose per your case (and mix freely — one file can hold both):
 
-- **the user name** — `aks:jwt:<github-login>` (replace `GITHUB_LOGIN` with the
-  developer's GitHub username, lowercased). The RoleBinding name conventionally
-  follows the login too (`<github-login>-admin`).
-- **`namespace`** — one RoleBinding **per namespace** the developer should
-  access. A single-namespace project needs one; a dev/prod project needs one in
-  each (copy the block, change `namespace`).
-- **access level** — ClusterRole `admin` for full control within the namespace,
-  or `view` for read-only.
+- **A GitHub team** (`kind: Group`, `"aks:jwt:<org>:<Team Display Name>"`) —
+  **recommended for real teams.** Infra commits the binding **once**; thereafter
+  membership is managed in GitHub: add someone to the team → they get access on
+  next login; remove them → access is gone. No cluster change, no commit either
+  way. Keeps developer churn out of the repo entirely.
+- **A single developer** (`kind: User`, `"aks:jwt:<github-login>"`, lowercased) —
+  for one-off / individual access.
 
-For a second developer, add another RoleBinding block. **Commit** — ArgoCD
+In both cases: add one RoleBinding **per namespace** the team/developer should
+access (a dev/prod project needs a binding in each), and use ClusterRole `admin`
+(full control within the namespace) or `view` (read-only). **Commit** — ArgoCD
 creates the RoleBinding(s). Confirm:
 ```bash
+# individual:
 kubectl auth can-i create deployments -n <namespace> --as="aks:jwt:<github-login>"
+# team (impersonate the group):
+kubectl auth can-i create deployments -n <namespace> \
+  --as=anyone --as-group="aks:jwt:<org>:<Team Display Name>"
 ```
 
-> The file stays a **`.example`** in the template so ArgoCD never syncs an
-> unfilled `GITHUB_LOGIN` placeholder. Only the real, renamed
-> `developer-rbac.yaml` is applied.
+> **Verify the exact team string from a real login** before relying on a team
+> binding — the group uses the team's display name **verbatim, spaces included**
+> (e.g. `aks:jwt:Scouterna:WSJ27 Crew`). Check Dex's "login successful" log line
+> for a team member: its `groups=[…]` shows the precise strings. A mismatched
+> binding silently grants nothing.
 
-### Grant a whole GitHub team access (recommended for project teams)
-
-For a project with an actual team, bind a **GitHub team** to the namespaces
-instead of listing developers one by one. The infra team commits the binding
-**once**; after that, membership is managed entirely in GitHub:
-
-- **add a developer to the team → they get access** on their next login,
-- **remove them → access is gone** — no cluster change, no commit either way.
-
-The team appears to Kubernetes RBAC as the group `aks:jwt:<org>:<team>` (the
-team's **display name**, e.g. `aks:jwt:Scouterna:WSJ27`). Bind that group with a
-RoleBinding **per namespace** the team should manage. In `developer-rbac.yaml`:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: wsj27-team-admin
-  namespace: <project>-prod          # one RoleBinding per namespace
-subjects:
-  - kind: Group
-    name: "aks:jwt:Scouterna:WSJ27"  # the GitHub team (display name, verbatim)
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: ClusterRole
-  name: admin                        # or `view` for read-only
-  apiGroup: rbac.authorization.k8s.io
-```
-
-Prefer this over per-developer `kind: User` bindings for anything with more than
-one or two people — it keeps developer churn out of the repo entirely. (Mix and
-match freely: a `developer-rbac.yaml` can hold both `kind: Group` team bindings
-and `kind: User` individual bindings.)
-
-> **Verify the exact team string from a real login** before committing the
-> binding — the group uses the team's display name as-is, spaces included (e.g.
-> `aks:jwt:Scouterna:WSJ27 Crew`). Check Dex's "login successful" log line for a
-> team member: its `groups=[…]` shows the precise strings. A mismatched binding
-> silently grants nothing.
+> The file stays a **`.example`** in the template so ArgoCD never syncs the
+> unfilled placeholders. Only the real, renamed `developer-rbac.yaml` is applied.
 
 ### How a developer logs in
 
