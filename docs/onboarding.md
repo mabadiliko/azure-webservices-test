@@ -129,6 +129,46 @@ kubectl auth can-i create deployments -n <namespace> --as="aks:jwt:<github-login
 > unfilled `GITHUB_LOGIN` placeholder. Only the real, renamed
 > `developer-rbac.yaml` is applied.
 
+### Grant a whole GitHub team access (recommended for project teams)
+
+For a project with an actual team, bind a **GitHub team** to the namespaces
+instead of listing developers one by one. The infra team commits the binding
+**once**; after that, membership is managed entirely in GitHub:
+
+- **add a developer to the team → they get access** on their next login,
+- **remove them → access is gone** — no cluster change, no commit either way.
+
+The team appears to Kubernetes RBAC as the group `aks:jwt:<org>:<team>` (the
+team's **display name**, e.g. `aks:jwt:Scouterna:WSJ27`). Bind that group with a
+RoleBinding **per namespace** the team should manage. In `developer-rbac.yaml`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wsj27-team-admin
+  namespace: <project>-prod          # one RoleBinding per namespace
+subjects:
+  - kind: Group
+    name: "aks:jwt:Scouterna:WSJ27"  # the GitHub team (display name, verbatim)
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin                        # or `view` for read-only
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Prefer this over per-developer `kind: User` bindings for anything with more than
+one or two people — it keeps developer churn out of the repo entirely. (Mix and
+match freely: a `developer-rbac.yaml` can hold both `kind: Group` team bindings
+and `kind: User` individual bindings.)
+
+> **Verify the exact team string from a real login** before committing the
+> binding — the group uses the team's display name as-is, spaces included (e.g.
+> `aks:jwt:Scouterna:WSJ27 Crew`). Check Dex's "login successful" log line for a
+> team member: its `groups=[…]` shows the precise strings. A mismatched binding
+> silently grants nothing.
+
 ### How a developer logs in
 
 **Headlamp (web UI):** browse to `https://headlamp.wsinfra.scouterna.net`, click
