@@ -51,9 +51,26 @@ FEDCRED_VELERO=velero-$CLUSTER        # Velero federated-credential name (one pe
 # --- DNS / access ---
 HOST=wsv2test.j26.se        # DNS suffix for the infra apps (Grafana, Headlamp, ...)
 
-# --- Derived (read from your az login; leave as-is) ---
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+# --- Subscription (set EXPLICITLY — see the warning below) ---
+SUBSCRIPTION_ID=<the-target-subscription-id>
+az account set --subscription "$SUBSCRIPTION_ID"
 ```
+
+> ⚠️ **Pin the subscription before anything else.** `az` remembers a default
+> subscription across sessions, and it may not be the one you think — a login for
+> unrelated work silently changes it. Every command below acts on whatever
+> subscription is active, including the destructive ones (`az group delete` in a
+> teardown). Deploying — or deleting — in the wrong subscription is the single
+> most damaging mistake available here, so set it explicitly rather than deriving
+> it from the current login, then **verify** you are where you intend to be:
+>
+> ```bash
+> az account show --query "{name:name, id:id}" -o table   # is this the right one?
+> az group list --query "[].name" -o tsv | head           # do these look familiar?
+> ```
+>
+> Re-run the `az account set` line whenever you open a new terminal for this
+> runbook.
 
 > A few values are read from the *running cluster* later (its OIDC issuer, its
 > node resource group) and are set into variables at that point (§7, §8).
@@ -100,29 +117,63 @@ az quota update --resource-name cores               --scope "$SCOPE" --limit-obj
 - Ephemeral OS disk is **not supported** on D4as_v5 — we use a managed OS disk
   (already set in `infra/aks.bicep`).
 
-## 2. GitHub OAuth app (for Grafana login)
+## 2. GitHub OAuth apps (Grafana login + Dex SSO)
 
-Daily Grafana login is **GitHub OAuth**, restricted to the **Scouterna** org, with
-GitHub teams → Grafana roles (config in `kube-prometheus-stack-values.yaml`,
-`grafana.ini` `auth.github`). The admin password is **break-glass only**. Do this
-before writing the Key Vault secrets (§6) so its Client Secret is ready.
+The cluster uses GitHub as its identity provider in **two independent places**, so
+you need **two separate GitHub OAuth Apps** (they have different callback URLs and
+cannot share one registration):
+
+| OAuth App | Used by | Why separate |
+|---|---|---|
+| **Grafana** | Grafana's own `auth.github` login | Callback `…/login/github` |
+| **Dex** | Dex → Headlamp *and* `kubectl` SSO | Callback `…/callback`; Dex fronts all cluster auth |
+
+Both are restricted to the **Scouterna** org. Do this before writing the Key Vault
+secrets (§6) so both client secrets are ready.
+
+### 2a. Grafana OAuth app
+
+Daily Grafana login is **GitHub OAuth**, with GitHub teams → Grafana roles (config
+in `kube-prometheus-stack-values.yaml`, `grafana.ini` `auth.github`). The admin
+password is **break-glass only**.
 
 1. Create a **GitHub OAuth App** (Scouterna org → Settings → Developer settings →
    OAuth Apps): Homepage `https://grafana.$HOST`, callback
    `https://grafana.$HOST/login/github`.
-2. Capture its **Client ID** and **Client Secret** into variables — the ID fills a
-   Grafana manifest (§9), the secret goes into Key Vault (§6):
+2. Capture its **Client ID** and **Client Secret** — the ID fills a Grafana
+   manifest (§9), the secret goes into Key Vault (§6):
    ```bash
-   GITHUB_CLIENT_ID=<client-id-from-the-oauth-app>
-   GITHUB_CLIENT_SECRET=<client-secret-from-the-oauth-app>
+   GITHUB_CLIENT_ID=<client-id-from-the-grafana-oauth-app>
+   GITHUB_CLIENT_SECRET=<client-secret-from-the-grafana-oauth-app>
    ```
 3. Later, set `role_attribute_path` in the Grafana values to the real Scouterna
    team slugs.
 
-> Deferring GitHub login? Set both variables to a placeholder string now — the
-> cluster comes up fine and only Grafana's GitHub login stays inactive until you
-> set the real values, re-write the Key Vault secret (§6), re-fill the manifest (§9), and
-> re-push.
+### 2b. Dex OAuth app (developer SSO for Headlamp + kubectl)
+
+Dex is the cluster's OIDC provider: developers log in to **Headlamp** and get
+**`kubectl` credentials** as their GitHub identity, with GitHub teams mapped to
+RBAC. Without this, Headlamp and `kubectl` SSO do not work. See
+[onboarding.md](onboarding.md) section B.
+
+1. Create a **second GitHub OAuth App**: Homepage `https://dex.$HOST`, callback
+   **`https://dex.$HOST/callback`**.
+2. Capture its Client ID and Client Secret, plus invent a random shared secret for
+   the Dex↔Headlamp static client:
+   ```bash
+   DEX_GITHUB_CLIENT_ID=<client-id-from-the-dex-oauth-app>
+   DEX_GITHUB_CLIENT_SECRET=<client-secret-from-the-dex-oauth-app>
+   DEX_HEADLAMP_CLIENT_SECRET=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+   ```
+   `DEX_GITHUB_CLIENT_ID` fills a Dex manifest (§9); the two secrets go into Key
+   Vault (§6). The Headlamp secret is **not** issued by GitHub — it is a value you
+   invent, shared between Dex's `headlamp` static client and Headlamp itself.
+
+> Deferring GitHub login? Set the variables to placeholder strings now — the
+> cluster comes up fine, and only the GitHub logins stay inactive until you set the
+> real values, re-write the Key Vault secrets (§6), re-fill the manifests (§9), and
+> re-push. Note that deferring the **Dex** app also defers `kubectl` SSO, so you
+> will be relying on the admin kubeconfig until it is configured.
 
 ## 3. Durable Key Vault
 
@@ -213,6 +264,10 @@ az keyvault secret set --vault-name $KEY_VAULT_NAME --name minio-root-user      
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name minio-root-password         --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-admin-password      --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-github-client-secret --value "$GITHUB_CLIENT_SECRET"
+
+# Dex SSO (§2b) — without these, Headlamp and kubectl SSO do not work
+az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-github-client-secret   --value "$DEX_GITHUB_CLIENT_SECRET"
+az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-headlamp-client-secret --value "$DEX_HEADLAMP_CLIENT_SECRET"
 ```
 
 **Sealed Secrets sealing key (do this once; it must survive every rebuild).** The
@@ -237,8 +292,10 @@ fi
 
 The `ExternalSecret`s then produce the in-cluster secrets consumers expect:
 `minio-root`, `loki-minio`, `thanos-objstore` (composed from the MinIO values),
-`grafana-admin`, `grafana-github-oauth`, and the Sealed Secrets `sealed-secrets-key`
-(a `kubernetes.io/tls` Secret labelled `active`, which the controller adopts).
+`grafana-admin`, `grafana-github-oauth`, `dex-oauth` (Dex's GitHub + Headlamp
+client secrets), `headlamp-oidc` (the same Headlamp secret, in its own namespace),
+and the Sealed Secrets `sealed-secrets-key` (a `kubernetes.io/tls` Secret labelled
+`active`, which the controller adopts).
 
 > **How the ordering works (no hand-seeding):** sync-waves are arranged so secrets
 > exist before the things that use them. The ESO operator is wave 0; the
@@ -341,14 +398,19 @@ echo "ESO_CLIENT_ID=$ESO_CLIENT_ID"
 echo "VELERO_CLIENT_ID=$VELERO_CLIENT_ID"
 echo "NODE_RESOURCE_GROUP=$NODE_RESOURCE_GROUP"
 echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID  BACKUP_STORAGE_ACCOUNT=$BACKUP_STORAGE_ACCOUNT  KEY_VAULT_NAME=$KEY_VAULT_NAME"
-echo "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID   # from §2"
+echo "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID           # Grafana app, from §2a"
+echo "DEX_GITHUB_CLIENT_ID=$DEX_GITHUB_CLIENT_ID   # Dex app, from §2b"
 ```
 
 Fill each `<PLACEHOLDER>` with the matching value:
 
 - `k8s/argocd/infra-apps/external-secrets.yaml` → `<ESO_CLIENT_ID>` = `$ESO_CLIENT_ID`.
 - `k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml` →
-  `<GITHUB_CLIENT_ID>` = `$GITHUB_CLIENT_ID` (from §2).
+  `<GITHUB_CLIENT_ID>` = `$GITHUB_CLIENT_ID` (the **Grafana** app, §2a).
+- `k8s/infra-manifest/dex/values.yaml` → `<GITHUB_CLIENT_ID>` =
+  `$DEX_GITHUB_CLIENT_ID` (the **Dex** app, §2b). ⚠️ Both files use the same
+  placeholder name but take **different** client ids — filling either with the
+  other's value breaks that login.
 - `k8s/argocd/infra-apps/velero.yaml` → `<VELERO_CLIENT_ID>` = `$VELERO_CLIENT_ID`,
   `<BACKUP_STORAGE_ACCOUNT>` = `$BACKUP_STORAGE_ACCOUNT`, `<SUBSCRIPTION_ID>` = `$SUBSCRIPTION_ID`,
   `<NODE_RESOURCE_GROUP>` = `$NODE_RESOURCE_GROUP`.
@@ -465,9 +527,12 @@ If a shared dashboard is ever wanted, expose `argocd-server` via Traefik + GitHu
 OAuth via ArgoCD's bundled Dex (Scouterna org, teams → RBAC). Not done here by
 choice.
 
-**Other infra UIs:** Headlamp uses per-developer **ServiceAccount tokens** (the
-token *is* the k8s authorization — a dev sees only their namespaces; see
-[onboarding.md](onboarding.md)). Grafana uses **GitHub OAuth** (§2).
+**Other infra UIs:** Headlamp uses **GitHub SSO via Dex** (§2b) — a developer logs
+in as their GitHub identity and sees only the namespaces their RBAC allows; the
+same Dex client also issues `kubectl` credentials. There are no ServiceAccount
+tokens to hand out (AKS caps them at 24h, which is why this model was adopted).
+See [onboarding.md](onboarding.md) section B. Grafana uses its own **GitHub
+OAuth** app (§2a).
 
 ---
 
