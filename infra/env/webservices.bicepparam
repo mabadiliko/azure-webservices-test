@@ -9,11 +9,11 @@
 // =============================================================================
 using '../main.bicep'
 
-param clusterName = 'webservices-v2-test'
+param clusterName = 'webservices-v2'
 param location = 'swedencentral'
 
 // --- Budget-tuned defaults ---
-param kubernetesVersion = '1.33.12'
+param kubernetesVersion = '1.36.2'
 param skuTier = 'Free'          // 'Free' = no paid API-server SLA (budget). 'Standard' to buy the SLA.
 param vmSize = 'Standard_D4as_v5' // AMD, 4 vCPU / 16 GB — sized for the resident infra baseline.
 param nodeCount = 1              // Manual scaling: bump this + redeploy to add nodes.

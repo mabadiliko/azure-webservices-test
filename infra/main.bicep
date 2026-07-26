@@ -13,7 +13,7 @@ param clusterName string = 'webservices-v2'
 param location string = 'swedencentral'
 
 @description('Kubernetes version.')
-param kubernetesVersion string = '1.33.12'
+param kubernetesVersion string = '1.36.2'
 
 @description('SLA tier (Free = no paid SLA')
 @allowed(['Free', 'Standard'])

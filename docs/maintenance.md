@@ -13,7 +13,7 @@ this document is how we keep them current without surprises.
   others are stable for months. Don't upgrade on a fixed calendar for its own
   sake — upgrade the fast-movers often, the stable ones rarely.
 - **Test before prod.** When there is a dev/test cluster, upgrade there first.
-  The whole platform can be rebuilt from Git (see `docs/01`–`03`), so a bad
+  The whole platform can be rebuilt from Git (see [`docs/install.md`](install.md)), so a bad
   upgrade is recoverable.
 
 ## Cadence by component
@@ -24,7 +24,7 @@ Based on each project's real release velocity and blast radius:
 |---|---|---|
 | **Quarterly** (fast-movers) | kube-prometheus-stack, Traefik, ArgoCD, Grafana/Loki/Alloy | Release often; chart-major bumps can change values. Review changelogs. |
 | **Semi-annual** (stable) | cert-manager, MinIO, CloudNativePG, Thanos, Headlamp, External Secrets, Gateway API CRDs | Slower cadence, fewer breaking changes. Bump the Gateway API CRDs in step with Traefik (see below). |
-| **AKS Kubernetes** | the cluster | Patch upgrades are automatic (`autoUpgradeProfile: patch` in the Bicep). **Minor** upgrades (1.33→1.34) are manual, ~3×/year following the K8s release train — do them before the running minor goes out of AKS support. |
+| **AKS Kubernetes** | the cluster | Patch upgrades are automatic (`autoUpgradeProfile: patch` in the Bicep). **Minor** upgrades (1.36→1.37) are manual, ~3×/year following the K8s release train — do them before the running minor goes out of AKS support. |
 
 ## Upgrade-sensitive components (read the changelog first)
 
@@ -62,9 +62,9 @@ Thanos, Headlamp.
 
 ## AKS upgrades
 
-- **Patches** (`1.33.x`): automatic via the `patch` upgrade channel + NodeImage
+- **Patches** (`1.36.x`): automatic via the `patch` upgrade channel + NodeImage
   channel in `infra/aks.bicep`. Nothing to do.
-- **Minors** (`1.33 → 1.34`): manual. Bump `kubernetesVersion` in
+- **Minors** (`1.36 → 1.37`): manual. Bump `kubernetesVersion` in
   `infra/aks.bicep` + the param files, `az deployment group create` (or
   `az aks upgrade`). Do it before AKS drops support for the running minor
   (check `az aks get-versions -l <region>`). On a single-node cluster the
@@ -83,7 +83,7 @@ As of the initial build:
 
 | Component | Pin |
 |---|---|
-| AKS Kubernetes | 1.33.12 |
+| AKS Kubernetes | 1.36.2 |
 | ArgoCD | v3.4.5 |
 | cert-manager | v1.20.2 |
 | Traefik | 41.0.2 (v3.7) |

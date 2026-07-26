@@ -1,5 +1,5 @@
 # Wave 1 — Traefik (ingress + LoadBalancer). Needs the Gateway API CRDs applied
-# at bootstrap (see docs/03) and cert-manager (wave 0).
+# at bootstrap (see docs/install.md) and cert-manager (wave 0).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -106,15 +106,12 @@ Onboarding a new common service is one file: drop an `Application` into
 
 ## Building the cluster
 
-Follow the runbooks in order — they capture every step and every gotcha:
-
-1. **[docs/01 — Provision the cluster](docs/01-provision-cluster.md)** — vCPU
-   quota, Bicep deploy, kubeconfig.
-2. **[docs/02 — Key Vault + identity](docs/02-keyvault-and-identity.md)** — the
-   durable secrets vault and Workload Identity federation.
-3. **[docs/03 — Bootstrap services](docs/03-bootstrap-services.md)** — seed the
-   bootstrap prerequisites, then install ArgoCD and apply the app-of-apps root;
-   ArgoCD brings up every common service from Git.
+The whole build is one runbook: **[docs/install.md](docs/install.md)** — from an
+empty subscription to a running cluster, as a single continuous shell session. It
+captures every step and gotcha, ordered by dependency: prerequisites that need no
+cluster first (quota, GitHub OAuth app, Key Vault, identities, secrets, backup
+storage), then provisioning, then the cluster-derived wiring, then bootstrapping
+ArgoCD.
 
 The common services are installed and managed **only** by ArgoCD — no manual
 `helm install`. `k8s/argocd/infra-root-app.yaml` manages everything from `main`.

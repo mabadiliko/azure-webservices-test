@@ -4,8 +4,9 @@
 // A purpose-built, portable-by-intent foundation:
 //   1. networkPlugin: azure + overlay   -> modern CNI (no deprecated kubenet)
 //   2. networkDataplane: cilium         -> eBPF dataplane + Cilium NetworkPolicy
-//   3. VMSS node pool + manual scaling   -> deliberate scale-up, no surprises
-//   4. SystemAssigned identity + OIDC + Workload Identity -> credential-free
+//   3. ipFamilies: IPv4 + IPv6          -> dual-stack (IMMUTABLE, see networkProfile)
+//   4. VMSS node pool + manual scaling   -> deliberate scale-up, no surprises
+//   5. SystemAssigned identity + OIDC + Workload Identity -> credential-free
 //   (+ availabilityZones                 -> zonal placement)
 //
 // Budget notes:
@@ -26,7 +27,7 @@ param clusterName string = 'webservices-v2'
 param location string = 'swedencentral'
 
 @description('Kubernetes version.')
-param kubernetesVersion string = '1.33.12'
+param kubernetesVersion string = '1.36.2'
 
 @description('DNS prefix for the managed cluster API server.')
 param dnsPrefix string = clusterName
@@ -90,7 +91,10 @@ resource aks 'Microsoft.ContainerService/managedClusters@2026-03-01' = {
       nodeOSUpgradeChannel: 'NodeImage'
     }
 
-    // Network: Azure CNI overlay + Cilium dataplane & policy.
+    // Network: Azure CNI overlay + Cilium dataplane & policy, dual-stack.
+    // ipFamilies and the CIDRs are immutable — set at creation only; changing
+    // them means a rebuild. The v6 ULA prefix is randomly generated per RFC 4193;
+    // don't replace it with a tidier-looking value.
     networkProfile: {
       networkPlugin: 'azure'
       networkPluginMode: 'overlay'
@@ -98,9 +102,10 @@ resource aks 'Microsoft.ContainerService/managedClusters@2026-03-01' = {
       networkPolicy: 'cilium'
       loadBalancerSku: 'standard'
       outboundType: 'loadBalancer'
-      podCidr: '10.244.0.0/16'
-      serviceCidr: '10.0.0.0/16'
-      dnsServiceIP: '10.0.0.10'
+      ipFamilies: ['IPv4', 'IPv6']
+      podCidrs: ['10.244.0.0/16', 'fdbc:2e46:9934:1::/64']
+      serviceCidrs: ['10.0.0.0/16', 'fdbc:2e46:9934:2::/108']
+      dnsServiceIP: '10.0.0.10' // must fall inside the first serviceCidrs entry
     }
 
     // Key Vault CSI addon — kept available as an opt-in escape hatch for

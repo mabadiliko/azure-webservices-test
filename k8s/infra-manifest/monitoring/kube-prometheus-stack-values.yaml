@@ -32,7 +32,7 @@ grafana:
       - grafana.wsv2test.j26.se
     path: /
     tls:
-      - secretName: grafana-wsv2test-j26-se-tls
+      - secretName: grafana-wsinfra-scouterna-net-tls
         hosts:
           - grafana.wsv2test.j26.se
 
@@ -49,7 +49,7 @@ grafana:
     # (GF_AUTH_GITHUB_CLIENT_SECRET__FILE above), not this file.
     auth.github:
       enabled: true
-      client_id: Ov23liQDmm14U0jTCkT5
+      client_id: <GITHUB_CLIENT_ID>
       scopes: user:email,read:org
       auth_url: https://github.com/login/oauth/authorize
       token_url: https://github.com/login/oauth/access_token

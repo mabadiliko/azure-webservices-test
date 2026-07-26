@@ -37,6 +37,13 @@ service:
   # No Azure-specific LB annotations: AKS auto-assigns a Standard-SKU public IP
   # in the cluster's node resource group. Keeping this annotation-free also aids
   # portability — one of the few Azure-specific touchpoints (see README Portability).
+  #
+  # Dual-stack: AKS assigns both a v4 and a v6 public IP (A + AAAA, install.md §11).
+  # Prefer, not Require, so this still deploys on a single-stack cluster.
+  ipFamilyPolicy: PreferDualStack
+  ipFamilies:
+    - IPv4
+    - IPv6
 
 # Modest resource requests/limits (single-node cluster; tune as load grows)
 resources:

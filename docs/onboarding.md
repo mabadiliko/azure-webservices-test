@@ -142,7 +142,7 @@ kubectl auth can-i create deployments -n <namespace> \
 
 ### How a developer logs in
 
-**Headlamp (web UI):** browse to `https://headlamp.wsinfra.scouterna.net`, click
+**Headlamp (web UI):** browse to `https://headlamp.wsv2test.j26.se`, click
 **Sign in**, authenticate with GitHub. They see only the namespaces their
 RoleBindings grant.
 
@@ -184,12 +184,131 @@ as their GitHub identity and never touch ArgoCD. If it wants GitOps:
    they deliberately **cannot** create the Layer-1 resources (namespaces, RBAC,
    databases). That privilege stays with `project-infra`.
 
-## Secrets (via Key Vault)
+## Secrets
 
-A project needing centralized secrets uses an `ExternalSecret` referencing keys
-in the shared Key Vault (see the External Secrets Operator setup). No CSI mount
-dance — ESO materializes a native Secret. A project can also just create plain
-Kubernetes Secrets in its own namespace.
+Three paths, pick by how the secret should be owned:
+
+| Need | Path | Infra involvement |
+|---|---|---|
+| Central custody / rotation, must outlive the cluster | **Key Vault + ESO** | infra sets each value in the vault |
+| Commit-safe, in Git, self-service, survives rebuild | **Sealed Secrets** | one-time key setup only |
+| Project-owned, kept out of Git, re-created by hand | **plain imperative Secret** | none |
+
+### Centralized secrets (via Key Vault — needs the infra team)
+
+Use this when the secret must **outlive the cluster** (a rebuild recreates every
+namespace from Git, so an in-namespace Secret is gone), or must be custodied
+centrally (rotated in one place, not pasted around). The value lives in the
+shared Key Vault; ESO (External Secrets Operator) reconciles it into a native
+`Secret` in the project's namespace — no CSI mount, no pod required, refreshed on
+an interval.
+
+**What the infra team does** (the project cannot — Key Vault write access and the
+`ClusterSecretStore` are infra-owned):
+
+1. **Put the value in Key Vault.** Pick a clear, unique key name (convention:
+   `<project>-<purpose>`, e.g. `proj-scoutid-smtp-password`):
+   ```bash
+   az keyvault secret set --vault-name $KEY_VAULT_NAME \
+     --name proj-scoutid-smtp-password --value "$THE_SECRET"
+   ```
+   That's the whole infra-side action. The shared `azure-kv` `ClusterSecretStore`
+   already exists and ESO already has `Key Vault Secrets User` on the vault, so no
+   per-secret identity or store wiring is needed.
+
+**What the project does** (self-service, in its `infra/` dir or its own manifests
+— it just needs an `ExternalSecret`, which the `project-infra` scope allows):
+
+2. Add an `ExternalSecret` referencing that key. It names the shared store and the
+   KV key, and ESO writes a native `Secret` the workload consumes normally:
+   ```yaml
+   apiVersion: external-secrets.io/v1
+   kind: ExternalSecret
+   metadata:
+     name: smtp
+     namespace: proj-scoutid
+   spec:
+     refreshInterval: 1h
+     secretStoreRef:
+       name: azure-kv           # the shared store — do not create your own
+       kind: ClusterSecretStore
+     target:
+       name: smtp               # the Secret ESO creates in this namespace
+       creationPolicy: Owner
+     data:
+       - secretKey: password    # key inside the resulting Secret
+         remoteRef:
+           key: proj-scoutid-smtp-password   # the Key Vault secret name
+   ```
+   (See `k8s/infra-manifest/external-secrets/*.yaml` for infra's own examples, and
+   the `ExternalSecret` in `_template/infra/database.yaml.example`.)
+
+> **Isolation caveat (be honest about it):** the shared `azure-kv` store is
+> cluster-scoped, so an `ExternalSecret` in *any* namespace can reference *any* KV
+> key — there is no per-namespace ACL. Keys are not secret-by-name, but don't rely
+> on obscurity. If a project needs a vault only it can read, ask the infra team for
+> a **dedicated Key Vault + a namespaced `SecretStore`** instead of the shared one.
+
+### Commit-safe self-service secrets (Sealed Secrets — no infra team)
+
+Use this when you want the secret **in Git** (so ArgoCD applies it declaratively
+and it survives a rebuild) but you do **not** want to file an infra ticket for
+each value. The cluster runs the **Sealed Secrets** controller: you encrypt a
+`Secret` with the `kubeseal` CLI against the controller's public key, commit the
+resulting `SealedSecret` (which only the in-cluster controller can decrypt), and
+the controller turns it back into a native `Secret` in your namespace. Safe to
+commit even to the public repo; fully self-service per secret.
+
+```bash
+# One-time: install kubeseal (the client) — https://github.com/bitnami-labs/sealed-secrets/releases
+# Fetch the controller's PUBLIC key (safe to cache / share):
+kubeseal --controller-namespace sealed-secrets --fetch-cert > pub-cert.pem
+
+# Author a normal Secret WITHOUT applying it, then seal it:
+kubectl create secret generic app-api-keys -n proj-scoutid \
+  --from-literal=stripe=sk_live_xxx --dry-run=client -o yaml \
+  | kubeseal --cert pub-cert.pem --format yaml > sealedsecret.yaml
+
+# Commit sealedsecret.yaml. ArgoCD applies it; the controller decrypts it into
+# the real Secret `app-api-keys` in namespace proj-scoutid.
+```
+
+The plaintext never touches Git — only the sealed form, which is bound to *this*
+cluster's key and *this* namespace/name (it cannot be moved or decrypted
+elsewhere). This is the recommended default for a project's own secrets.
+
+> The infra team custodies the single sealing key in Key Vault (so it survives
+> rebuilds), but that is a **one-time** setup — no per-secret infra action. See
+> docs/install.md.
+
+### Project-owned imperative secrets (no infra team, not in Git)
+
+For a value you're happy to own and re-create yourself and that you'd rather keep
+out of Git entirely, just make a plain `Secret` in your namespace. You have
+`admin` on it — no infra request.
+
+Best practices so this stays sane and safe:
+
+- **Never commit the plaintext.** A `Secret` YAML with real `data:`/`stringData:`
+  in Git (even a private repo) is a leaked secret — `data:` is only base64, not
+  encryption. If the value needs to live in Git so ArgoCD can apply it
+  declaratively, use **Sealed Secrets** (above) — commit the sealed form — or a
+  **Key Vault secret** if it should be centrally custodied.
+- **Create it imperatively, out of band**, and keep the value in a password
+  manager, not the repo:
+  ```bash
+  kubectl create secret generic app-api-keys -n proj-scoutid \
+    --from-literal=stripe=sk_live_xxx --from-literal=sendgrid=SG.xxx
+  ```
+  Or `--from-file=` to avoid the value ever appearing in your shell history.
+- **Remember the rebuild trade-off.** Imperative Secrets are *not* in Git, so a
+  full cluster rebuild does not recreate them — you re-run the command. That's the
+  cost of keeping them out of Git. Anything that must survive a rebuild
+  automatically belongs in Key Vault (above).
+- **Reference, don't inline.** Mount via `envFrom`/`valueFrom: secretKeyRef` or a
+  volume — never bake the value into a ConfigMap, image, or Deployment env literal.
+- **Scope RBAC.** Secrets are namespaced; a developer with `view` (not `admin`) on
+  the namespace cannot read `Secret` contents. Grant `admin` deliberately.
 
 ## Add a database with backups (PostgreSQL / CloudNativePG)
 

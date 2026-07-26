@@ -35,3 +35,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Cluster secret/config dumps (never commit)
+scoutview.env
+*.env
