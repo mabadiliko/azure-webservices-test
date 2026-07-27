@@ -33,17 +33,27 @@ ports:
           scheme: https
 
 service:
-  type: LoadBalancer
   # No Azure-specific LB annotations: AKS auto-assigns a Standard-SKU public IP
   # in the cluster's node resource group. Keeping this annotation-free also aids
   # portability — one of the few Azure-specific touchpoints (see README Portability).
   #
-  # Dual-stack: AKS assigns both a v4 and a v6 public IP (A + AAAA, install.md §11).
-  # Prefer, not Require, so this still deploys on a single-stack cluster.
-  ipFamilyPolicy: PreferDualStack
-  ipFamilies:
-    - IPv4
-    - IPv6
+  # `spec` is the chart's passthrough into the Service spec. ipFamilyPolicy /
+  # ipFamilies MUST live here — set directly under `service:` the chart silently
+  # drops them and the Service comes up SingleStack IPv4 with no error.
+  spec:
+    type: LoadBalancer
+    # Dual-stack: AKS assigns both a v4 and a v6 public IP (A + AAAA, install.md §11).
+    # Prefer, not Require, so this still deploys on a single-stack cluster.
+    ipFamilyPolicy: PreferDualStack
+    ipFamilies:
+      - IPv4
+      - IPv6
+    # REQUIRED on Azure Linux node pools — AKS documents that service objects are
+    # only supported with externalTrafficPolicy: Local there. With the default
+    # `Cluster`, the IPv6 LB health probe fails and the v6 address silently
+    # blackholes ALL inbound traffic (v4 keeps working, so it looks like an IPv6
+    # bug). Also preserves the client source IP. See docs/install.md §11.
+    externalTrafficPolicy: Local
 
 # Modest resource requests/limits (single-node cluster; tune as load grows)
 resources:
@@ -63,3 +73,30 @@ ingressRoute:
 log:
   level: WARN
 accessLog: {}
+
+# Prometheus metrics. The chart creates a dedicated metrics Service plus a
+# ServiceMonitor so kube-prometheus-stack scrapes Traefik.
+metrics:
+  prometheus:
+    # Traefik is wave 1 but kube-prometheus-stack (which owns the ServiceMonitor
+    # CRD) is wave 2, so at first sync the CRD does not exist yet. Without this,
+    # the chart's render-time API check aborts with "You have to deploy
+    # monitoring.coreos.com/v1 first" and Traefik fails to render at all.
+    # ArgoCD applies server-side and self-heals once the CRD lands, so skip the
+    # check. Remove only if kps is ever moved to an earlier wave than Traefik.
+    disableAPICheck: true
+    # Per-router labels give per-Ingress/IngressRoute breakdowns in Grafana.
+    addRoutersLabels: true
+    # Finer latency buckets than the chart default (0.1/0.3/1.2/5s).
+    # histogram_quantile interpolates *within* a bucket, so narrow buckets shrink
+    # that error — P50/P95/P99 are far less distorted.
+    buckets: "0.05,0.1,0.25,0.5,0.75,1,2.5,5"
+    service:
+      enabled: true
+    serviceMonitor:
+      enabled: true
+      # REQUIRED: Prometheus is deployed with
+      # serviceMonitorSelector.matchLabels.release=kps, so a ServiceMonitor
+      # without this label is silently ignored — no error, just no metrics.
+      additionalLabels:
+        release: kps

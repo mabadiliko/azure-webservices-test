@@ -93,3 +93,29 @@ spec:
     name: barman-cloud.cloudnative-pg.io
   cluster:
     name: PROJECT-db
+---
+# Prometheus scraping for THIS database's PostgreSQL instances.
+#
+# The cluster-wide CNPG PodMonitor only covers the *operator*; each database
+# needs its own PodMonitor for the actual Postgres metrics (connections,
+# transactions, replication lag, WAL, cache hit ratio, backup status).
+#
+# Written out explicitly rather than using `Cluster.spec.monitoring.
+# enablePodMonitor`, which CNPG deprecated in 1.30 and will remove — upstream's
+# recommendation is now to manage the PodMonitor yourself.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: PROJECT-db
+  namespace: PROJECT-prod
+  labels:
+    # REQUIRED: Prometheus selects only monitors labelled release=kps. Without
+    # it the PodMonitor is silently ignored — no error, just no metrics.
+    release: kps
+spec:
+  selector:
+    matchLabels:
+      # CNPG puts this label on every instance pod of the cluster.
+      cnpg.io/cluster: PROJECT-db
+  podMetricsEndpoints:
+    - port: metrics

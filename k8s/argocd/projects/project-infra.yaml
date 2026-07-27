@@ -30,7 +30,8 @@ spec:
     - group: ''
       kind: Namespace
   # Namespaced resources. RoleBinding/ServiceAccount for developer access;
-  # CNPG + ExternalSecret for the opt-in shared database.
+  # CNPG + ExternalSecret for the opt-in shared database; PodMonitor so that
+  # database ships its Postgres metrics to the shared Prometheus.
   namespaceResourceWhitelist:
     - group: ''
       kind: ServiceAccount
@@ -40,3 +41,8 @@ spec:
       kind: '*'
     - group: 'external-secrets.io'
       kind: ExternalSecret
+    # Scrape config only — a PodMonitor cannot grant access to anything, it just
+    # tells Prometheus what to poll. Without this the database PodMonitor is
+    # rejected with "not permitted in project".
+    - group: 'monitoring.coreos.com'
+      kind: PodMonitor

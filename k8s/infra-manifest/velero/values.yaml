@@ -69,3 +69,13 @@ resources:
     memory: 128Mi
   limits:
     memory: 512Mi
+
+# Prometheus metrics (backup success/failure, duration). autodetect would look
+# for the CRD at render time, which is unreliable under ArgoCD — set explicitly.
+metrics:
+  enabled: true
+  serviceMonitor:
+    autodetect: false
+    enabled: true
+    additionalLabels:
+      release: kps

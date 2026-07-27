@@ -18,7 +18,7 @@ spec:
   sources:
     - repoURL: https://stevehipwell.github.io/helm-charts/
       chart: thanos
-      targetRevision: 1.23.1
+      targetRevision: 1.24.0
       helm:
         releaseName: thanos
         valueFiles:

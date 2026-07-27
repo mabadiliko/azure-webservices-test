@@ -56,3 +56,9 @@ receive:
   enabled: false
 rule:
   enabled: false
+
+# Prometheus metrics for all Thanos components (Prometheus selects on release=kps).
+serviceMonitor:
+  enabled: true
+  additionalLabels:
+    release: kps

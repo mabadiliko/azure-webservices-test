@@ -31,17 +31,29 @@ Based on each project's real release velocity and blast radius:
 Not all bumps are equal. These carry a real risk of breaking changes:
 
 - **External Secrets Operator** — the project moved `0.x → 1.0 → 2.x` in 2025
-  (CRD `v1beta1`→`v1`, API changes). Our pin is on the old `0.x` track. Moving to
-  `2.x` is a **migration, not a bump** — plan it as its own task with the ESO
-  upgrade guide, and re-verify the `ClusterSecretStore` + `ExternalSecret`s.
+  (CRD `v1beta1`→`v1`, API changes). We are already on the `2.x` track and our CRs
+  use the `v1` API, so ordinary `2.x` bumps are routine. The chart owns its CRDs,
+  so an *in-place* upgrade across that old boundary would need the previous CRDs
+  removed first — not a concern for a fresh install.
+- **Loki** — the OSS chart **changed repository** in March 2026. `grafana/loki`'s
+  chart became Grafana **Enterprise** Logs only at `7.0.0`; the OSS chart forked to
+  `grafana-community/helm-charts` (from 6.55.0, renumbered to `18.x`). We track the
+  community OSS chart. **Never "upgrade" to grafana.github.io `7.x`** — that is a
+  different (enterprise) product, not a newer version of what we run.
 - **kube-prometheus-stack** — the chart major version changes frequently and can
   rename values / bump CRDs. Diff the values against the new chart's defaults.
 - **Traefik** — chart majors (e.g. 39→41) can change the values schema and the
   Traefik minor (v3.6→v3.7). Verify IngressRoutes / middlewares still render.
 - **Gateway API CRDs** — installed by the `gateway-api-crds` ArgoCD app (wave 0),
-  pinned by `targetRevision` (a git tag). Bump it in step with Traefik: check the
-  Traefik release's supported Gateway API version first, then move the tag. The
-  app has `prune: false`, so the CRDs (and any Gateways/HTTPRoutes) are never
+  pinned by `targetRevision` (a git tag). **Pin to Traefik's version, not to the
+  latest release.** Traefik is compiled against a specific Gateway API version;
+  installing newer CRDs puts the schema ahead of the code that reads it, with no
+  benefit. Check before bumping:
+  ```bash
+  curl -s https://raw.githubusercontent.com/traefik/traefik/v3.7.6/go.mod | grep gateway-api
+  # -> sigs.k8s.io/gateway-api v1.5.1   (use the tag matching the chart's appVersion)
+  ```
+  The app has `prune: false`, so the CRDs (and any Gateways/HTTPRoutes) are never
   deleted by a sync — upgrades apply in place.
 - **cert-manager** — generally smooth, but CRD upgrades must be applied (the
   chart handles this with `crds.enabled: true`).
@@ -85,14 +97,14 @@ As of the initial build:
 |---|---|
 | AKS Kubernetes | 1.36.2 |
 | ArgoCD | v3.4.5 |
-| cert-manager | v1.20.2 |
+| cert-manager | v1.21.0 |
 | Traefik | 41.0.2 (v3.7) |
-| Gateway API CRDs | v1.2.1 |
+| Gateway API CRDs | v1.5.1 |
 | MinIO | 5.4.0 |
-| kube-prometheus-stack | 87.15.1 |
-| Loki / Alloy | 6.49.0 / 1.5.0 |
-| Thanos (stevehipwell) | 1.23.1 (app 0.41.0) |
-| External Secrets | 2.7.0 |
+| kube-prometheus-stack | 87.19.2 |
+| Loki / Alloy | 18.5.4 (grafana-community OSS fork) / 1.11.0 |
+| Thanos (stevehipwell) | 1.24.0 (app 0.42.2) |
+| External Secrets | 2.8.0 |
 | CloudNativePG | 0.29.0 (app 1.30.0) |
 | Headlamp | 0.41.0 |
 | Velero | 12.1.0 (app 1.18.1) |

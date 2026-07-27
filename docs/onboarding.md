@@ -334,7 +334,12 @@ method; the classic `spec.backup.barmanObjectStore` is deprecated).
      (secret `backup-storage-account-key`) into `backup-storage-key`,
    - an `ObjectStore` (destination = the project's container),
    - a `Cluster` that references the plugin in `spec.plugins`,
-   - a daily `ScheduledBackup` (`method: plugin`).
+   - a daily `ScheduledBackup` (`method: plugin`),
+   - a `PodMonitor` so the shared Prometheus scrapes this database's PostgreSQL
+     metrics (connections, transactions, replication lag, WAL, cache hit ratio,
+     backup status). Its `release: kps` label is what makes Prometheus pick it
+     up, and the `cnpg.io/cluster` selector must match the `Cluster` name — if
+     you renamed `PROJECT-db`, rename it in both places.
 3. **Verify**: the `Cluster` reaches `Cluster in healthy state` and its
    `ContinuousArchiving` condition is `True`; a `Backup` completes and blobs
    appear under `cnpg-<project>/base/…` and `…/wals/…` in the storage account.

@@ -509,6 +509,25 @@ IPv6-only validation paths.
 > immutable — an existing IPv4-only cluster cannot be converted to dual-stack in
 > place. If you inherit a single-stack cluster, it must be rebuilt.
 
+> **`externalTrafficPolicy: Local` is REQUIRED for IPv6 to work.** AKS documents
+> that on **Azure Linux** node pools (which this cluster uses) "service objects are
+> only supported with `externalTrafficPolicy: Local`". With the default `Cluster`,
+> the **IPv6 load-balancer health probe fails and the v6 address silently
+> blackholes all inbound traffic** — while IPv4 keeps working, so it looks like a
+> broken IPv6 feature rather than a misconfiguration. It is set in
+> `k8s/infra-manifest/traefik/values.yaml` under `service.spec`; don't remove it.
+> Symptom if it regresses: `curl -6` to the LB times out, `ping6` gets 100% loss,
+> and LB `DipAvailability` sits around 50% (one frontend healthy, one not).
+
+> **Verify IPv6 BEFORE publishing the AAAA record.** Let's Encrypt *prefers* IPv6
+> when an AAAA exists, so if v6 is unreachable the HTTP-01 challenge fails and
+> **no certificate on the cluster will issue** — even though IPv4 is perfectly
+> healthy. The failure reads as "certs won't issue", not as an IPv6 problem. Check
+> from an IPv6-capable host first (Azure Cloud Shell is not one):
+> ```bash
+> curl -sS --max-time 10 -o /dev/null -w '%{http_code}\n' "http://[$LB_V6]/"
+> ```
+
 ---
 
 ## ArgoCD access — pure GitOps, no exposed GUI

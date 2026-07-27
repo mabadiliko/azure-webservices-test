@@ -24,3 +24,14 @@ resources:
     memory: 64Mi
   limits:
     memory: 192Mi
+
+# Prometheus metrics for the operator (Prometheus selects on release=kps).
+serviceMonitor:
+  enabled: true
+  # ESO is wave 0, kube-prometheus-stack (which owns the ServiceMonitor CRD) is
+  # wave 2. The chart's default renderMode `skipIfMissing` would silently emit
+  # NOTHING at first sync and never revisit it — metrics would just be absent
+  # with no error. alwaysRender emits the CR; ArgoCD retries until the CRD exists.
+  renderMode: alwaysRender
+  additionalLabels:
+    release: kps

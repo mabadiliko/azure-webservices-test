@@ -6,3 +6,13 @@ resources:
   requests:
     cpu: 20m
     memory: 64Mi
+
+# Prometheus metrics. Note the chart uses lowercase `servicemonitor`, and
+# podmonitor/servicemonitor are mutually exclusive (enabling both errors).
+prometheus:
+  enabled: true
+  servicemonitor:
+    enabled: true
+    # Prometheus selects on release=kps (see monitoring values).
+    labels:
+      release: kps

@@ -6,6 +6,13 @@
 # CRDs that ship in that release's standard-install.yaml. Bump targetRevision to
 # upgrade (see docs/maintenance.md), in step with Traefik's supported version.
 #
+# PIN TO TRAEFIK'S VERSION, NOT TO LATEST. Traefik v3.7.6 (chart 41.0.2) is built
+# against sigs.k8s.io/gateway-api v1.5.1 — check its go.mod before bumping:
+#   curl -s https://raw.githubusercontent.com/traefik/traefik/<tag>/go.mod | grep gateway-api
+# Installing CRDs newer than the controller (v1.6.x today) puts the schema ahead
+# of the code that reads it, with no benefit — Traefik cannot use fields it was
+# not compiled for.
+#
 # ServerSideApply is required: the CRD schemas are large enough to exceed the
 # client-side last-applied-configuration annotation limit (same reason the ArgoCD
 # install needs --server-side).
@@ -29,7 +36,7 @@ spec:
     namespace: kube-system
   source:
     repoURL: https://github.com/kubernetes-sigs/gateway-api.git
-    targetRevision: v1.2.1
+    targetRevision: v1.5.1
     path: config/crd/standard
   syncPolicy:
     automated:

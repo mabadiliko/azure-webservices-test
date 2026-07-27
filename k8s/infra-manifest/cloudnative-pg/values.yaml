@@ -8,3 +8,10 @@ resources:
     memory: 100Mi
   limits:
     memory: 256Mi
+
+# Operator metrics. CNPG uses a PodMonitor (not a ServiceMonitor); Prometheus's
+# podMonitorSelector uses the same release=kps label.
+monitoring:
+  podMonitorEnabled: true
+  podMonitorAdditionalLabels:
+    release: kps
