@@ -450,16 +450,29 @@ az provider register --namespace Microsoft.ContainerService            # after i
 ```
 
 `infra/jwtauthenticator/dex.json` carries the claim mappings. **Its `issuer.url`
-is environment-specific** — it must be `https://dex.$HOST` for *this* cluster, so
-check it before applying:
+is the one place `$HOST` is hardcoded** rather than substituted — everything else
+in this runbook derives from the variable, so this file is the one that silently
+points at the wrong cluster after a copy. Assert it, and rewrite it if it does not
+match:
 
 ```bash
-grep -A2 '"issuer"' infra/jwtauthenticator/dex.json     # url must be https://dex.$HOST
+# Fails loudly if the issuer does not match this cluster's $HOST.
+grep -q "\"url\": \"https://dex.$HOST\"" infra/jwtauthenticator/dex.json \
+  && echo "issuer OK: https://dex.$HOST" \
+  || echo "MISMATCH — currently: $(grep -o 'https://dex\.[^"]*' infra/jwtauthenticator/dex.json)"
+
+# If it mismatched, point it at this cluster (then commit the change):
+sed -i "s#\"url\": \"https://dex\.[^\"]*\"#\"url\": \"https://dex.$HOST\"#" \
+  infra/jwtauthenticator/dex.json
 
 az aks jwtauthenticator add -g $CLUSTER_RG --cluster-name $CLUSTER \
   --name dex --config-file infra/jwtauthenticator/dex.json
 # use `update` instead of `add` if one already exists
 ```
+
+> A wrong issuer is **not** rejected at apply time — the resource is created
+> happily and every login then fails token validation, which looks like a broken
+> Dex rather than a stale URL.
 
 This maps a Dex token to a cluster identity: the user becomes
 `aks:jwt:<github-login>`, and each GitHub team becomes
