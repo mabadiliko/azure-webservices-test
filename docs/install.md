@@ -328,14 +328,23 @@ and the Sealed Secrets `sealed-secrets-key` (a `kubernetes.io/tls` Secret labell
 ## 7a. Review params + deploy
 
 `infra/env/webservices.bicepparam` holds the cluster shape (name, region, VM size,
-node count, SLA tier). It is committed and holds no secrets. If you changed any
-`$CLUSTER`/`$LOCATION` above for a test, edit the param file to match.
+node count, SLA tier). It is committed and holds no secrets. The cluster **name**
+is overridden on the command line below (so a test deploy needs no edit to the
+committed file); if you changed `$LOCATION` or want a different node size/count,
+edit the param file.
 
 ```bash
 az group create -n $CLUSTER_RG -l $LOCATION
-az deployment group what-if -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webservices.bicepparam   # preview, creates nothing
-az deployment group create  -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webservices.bicepparam
+az deployment group what-if -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webservices.bicepparam -p clusterName=$CLUSTER   # preview, creates nothing
+az deployment group create  -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webservices.bicepparam -p clusterName=$CLUSTER
 ```
+
+> **`-p clusterName=$CLUSTER` is not optional.** The param file pins
+> `clusterName = 'webservices-v2'` (the production name), so without this
+> override a test deploy creates a resource group named `$CLUSTER_RG` containing
+> a cluster still called `webservices-v2` — and every later step that does
+> `az aks show -n $CLUSTER` fails with "not found". A CLI `-p` takes precedence
+> over the same parameter in the `.bicepparam` file.
 
 `$CLUSTER_RG` is the cluster's resource group, distinct from the durable
 `$INFRA_RG`. AKS also auto-creates a *node* resource group (named
