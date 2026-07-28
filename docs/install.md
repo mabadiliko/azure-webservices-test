@@ -559,11 +559,25 @@ IPv6-only validation paths.
 > **Verify IPv6 BEFORE publishing the AAAA record.** Let's Encrypt *prefers* IPv6
 > when an AAAA exists, so if v6 is unreachable the HTTP-01 challenge fails and
 > **no certificate on the cluster will issue** — even though IPv4 is perfectly
-> healthy. The failure reads as "certs won't issue", not as an IPv6 problem. Check
-> from an IPv6-capable host first (Azure Cloud Shell is not one):
+> healthy. The failure reads as "certs won't issue", not as an IPv6 problem.
+>
+> This must run **from a host that has working IPv6** — many workstations and
+> Azure Cloud Shell do not. Check the host first; if it has no IPv6, run the
+> curl over SSH on one that does:
 > ```bash
+> # 1. Does THIS host have IPv6 at all?
+> curl -6 -sS --max-time 10 https://ipv6.icanhazip.com || echo "no IPv6 here — use a host that has it"
+>
+> # 2. Then test the LB's v6 address (expects 404/301/200 — anything but a timeout).
+> #    $LB_V6 comes from the block above; re-run it if this shell is new.
 > curl -sS --max-time 10 -o /dev/null -w '%{http_code}\n' "http://[$LB_V6]/"
+>
+> # From another host, pass the literal address (variables do not cross ssh):
+> ssh <ipv6-capable-host> "curl -sS --max-time 10 -o /dev/null -w '%{http_code}\n' 'http://[$LB_V6]/'"
 > ```
+> An empty `$LB_V6` produces `curl: (3) URL using bad/illegal format or missing
+> URL` — that means the assignment block above did not run in this shell (or
+> `KUBECONFIG` was not set), not that IPv6 is broken.
 
 ---
 
