@@ -41,7 +41,7 @@ config:
       id: github
       name: GitHub
       config:
-        clientID: <GITHUB_CLIENT_ID>          # Dex's own GitHub OAuth App (client id is public)
+        clientID: <DEX_GITHUB_CLIENT_ID>          # Dex's own GitHub OAuth App (client id is public)
         clientSecret: $GITHUB_CLIENT_SECRET         # expanded from env (ESO secret)
         redirectURI: https://dex.wsv2test.j26.se/callback
         orgs:

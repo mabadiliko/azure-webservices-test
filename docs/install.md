@@ -143,8 +143,8 @@ password is **break-glass only**.
 2. Capture its **Client ID** and **Client Secret** — the ID fills a Grafana
    manifest (§9), the secret goes into Key Vault (§6):
    ```bash
-   GITHUB_CLIENT_ID=<client-id-from-the-grafana-oauth-app>
-   GITHUB_CLIENT_SECRET=<client-secret-from-the-grafana-oauth-app>
+   GRAFANA_GITHUB_CLIENT_ID=<client-id-from-the-grafana-oauth-app>
+   GRAFANA_GITHUB_CLIENT_SECRET=<client-secret-from-the-grafana-oauth-app>
    ```
 3. Later, set `role_attribute_path` in the Grafana values to the real Scouterna
    team slugs.
@@ -263,7 +263,7 @@ az keyvault secret list --vault-name $KEY_VAULT_NAME --query "[].name" -o tsv   
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name minio-root-user             --value admin
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name minio-root-password         --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-admin-password      --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
-az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-github-client-secret --value "$GITHUB_CLIENT_SECRET"
+az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-github-client-secret --value "$GRAFANA_GITHUB_CLIENT_SECRET"
 
 # Dex SSO (§2b) — without these, Headlamp and kubectl SSO do not work
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-github-client-secret   --value "$DEX_GITHUB_CLIENT_SECRET"
@@ -407,7 +407,7 @@ echo "ESO_CLIENT_ID=$ESO_CLIENT_ID"
 echo "VELERO_CLIENT_ID=$VELERO_CLIENT_ID"
 echo "NODE_RESOURCE_GROUP=$NODE_RESOURCE_GROUP"
 echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID  BACKUP_STORAGE_ACCOUNT=$BACKUP_STORAGE_ACCOUNT  KEY_VAULT_NAME=$KEY_VAULT_NAME"
-echo "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID           # Grafana app, from §2a"
+echo "GRAFANA_GITHUB_CLIENT_ID=$GRAFANA_GITHUB_CLIENT_ID           # Grafana app, from §2a"
 echo "DEX_GITHUB_CLIENT_ID=$DEX_GITHUB_CLIENT_ID   # Dex app, from §2b"
 ```
 
@@ -415,11 +415,14 @@ Fill each `<PLACEHOLDER>` with the matching value:
 
 - `k8s/argocd/infra-apps/external-secrets.yaml` → `<ESO_CLIENT_ID>` = `$ESO_CLIENT_ID`.
 - `k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml` →
-  `<GITHUB_CLIENT_ID>` = `$GITHUB_CLIENT_ID` (the **Grafana** app, §2a).
-- `k8s/infra-manifest/dex/values.yaml` → `<GITHUB_CLIENT_ID>` =
-  `$DEX_GITHUB_CLIENT_ID` (the **Dex** app, §2b). ⚠️ Both files use the same
-  placeholder name but take **different** client ids — filling either with the
-  other's value breaks that login.
+  `<GRAFANA_GITHUB_CLIENT_ID>` = `$GRAFANA_GITHUB_CLIENT_ID` (the **Grafana** app, §2a).
+- `k8s/infra-manifest/dex/values.yaml` → `<DEX_GITHUB_CLIENT_ID>` =
+  `$DEX_GITHUB_CLIENT_ID` (the **Dex** app, §2b).
+
+> Each placeholder is named for exactly one variable, so `<NAME>` always takes
+> `$NAME`. The two GitHub client ids are **different values from different OAuth
+> apps** — mixing them up breaks that login, which is why neither is called just
+> `GITHUB_CLIENT_ID`.
 - `k8s/argocd/infra-apps/velero.yaml` → `<VELERO_CLIENT_ID>` = `$VELERO_CLIENT_ID`,
   `<BACKUP_STORAGE_ACCOUNT>` = `$BACKUP_STORAGE_ACCOUNT`, `<SUBSCRIPTION_ID>` = `$SUBSCRIPTION_ID`,
   `<NODE_RESOURCE_GROUP>` = `$NODE_RESOURCE_GROUP`.
