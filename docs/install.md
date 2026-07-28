@@ -499,6 +499,71 @@ kubectl create clusterrolebinding webservices-infra-admin \
 > display name, or a differing space) fails **silently** — the login succeeds and
 > the user simply sees nothing.
 
+### The shared developer kubeconfig
+
+Developers reach the cluster with `kubectl` through the same Dex login. They need
+a kubeconfig that points at this cluster and shells out to `kubectl oidc-login` —
+**onboarding.md tells them to get it from the infra team, so it has to exist.**
+
+It holds **no secrets**: the API address, the cluster's public CA, and an `exec`
+block. It is **identical for every developer** — identity is established at login
+time, so it can be committed and handed out freely. Generate it once per cluster
+(the server address and CA are cluster-specific):
+
+```bash
+SERVER=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.server}')
+CA=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+
+cat > k8s/access/oidc-kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - name: webservices
+    cluster:
+      server: $SERVER
+      certificate-authority-data: $CA
+contexts:
+  - name: webservices
+    context: {cluster: webservices, user: oidc}
+current-context: webservices
+users:
+  - name: oidc
+    user:
+      exec:
+        apiVersion: client.authentication.k8s.io/v1beta1
+        command: kubectl
+        args:
+          - oidc-login
+          - get-token
+          - --oidc-issuer-url=https://dex.$HOST
+          - --oidc-client-id=kubectl
+          - --oidc-extra-scope=openid
+          - --oidc-extra-scope=profile
+          - --oidc-extra-scope=email
+          - --oidc-extra-scope=groups
+          - --oidc-extra-scope=offline_access
+        interactiveMode: IfAvailable
+EOF
+```
+
+Verify it end-to-end (opens a browser for GitHub login the first time):
+
+```bash
+kubectl --kubeconfig k8s/access/oidc-kubeconfig get nodes
+```
+
+> **`--oidc-client-id=kubectl` must be in the JWTAuthenticator's `audiences`.**
+> `dex.json` lists both `headlamp` and `kubectl`; if `kubectl` is missing there,
+> Headlamp works and `kubectl` fails with `Unauthorized` — the token is valid but
+> its audience is not accepted. After changing audiences, run
+> `kubectl oidc-login clean` to drop the cached (rejected) token.
+
+> The plugin is [int128/kubelogin][kubelogin-install], **not** Azure's `kubelogin`
+> — different tools, same name. Developers install it themselves (onboarding.md
+> section B).
+
+[kubelogin-install]: https://github.com/int128/kubelogin
+
 Project developers are *not* granted here — they get per-namespace RoleBindings
 through the normal onboarding flow (see [onboarding.md](onboarding.md) section B).
 
