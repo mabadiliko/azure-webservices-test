@@ -394,6 +394,101 @@ az identity federated-credential create -g $INFRA_RG --identity-name $VELERO_IDE
   --audiences "api://AzureADTokenExchange"
 ```
 
+## 8b. Trust Dex on the API server (developer SSO)
+
+Without this, Headlamp and `kubectl` SSO **do not work**: Dex issues a valid
+token, the API server does not trust it, and every request is rejected. It is an
+AKS control-plane resource applied with `az` — not GitOps — so it is easy to skip
+and the symptom (a working login that then sees nothing) does not point at it.
+
+It is placed here, before ArgoCD, because it needs only a running cluster — not
+Dex itself. The `az feature register` can take several minutes to leave
+`Registering`, so starting it early keeps it off the critical path.
+
+> **Preview feature.** `JWTAuthenticatorPreview` is in preview; weigh that before
+> relying on it in production. The cluster is fully usable without it — you just
+> administer it with the admin kubeconfig instead of GitHub SSO.
+
+> ⚠️ **`az feature register` is SUBSCRIPTION-wide, not cluster-scoped.** The three
+> commands below have three different blast radii, and only one is confined to
+> this cluster:
+>
+> | Command | Scope | Reaches other clusters? |
+> |---|---|---|
+> | `az extension add` | this **workstation** only | no — just your local `az` |
+> | `az feature register` | the whole **subscription** | **yes, potentially** |
+> | `az aks jwtauthenticator add` | this **cluster** only | no |
+>
+> If the subscription also hosts production workloads, registering a preview
+> feature there is a decision to make deliberately — not a routine step. In
+> practice the risk is low (registering *enables* a capability; it does not alter
+> existing clusters, which keep running unchanged unless someone configures a
+> JWTAuthenticator on them), but Microsoft's preview terms apply subscription-wide
+> and preview features have historically changed defaults for newly-created
+> resources. Check what is already registered before adding to it, and note that
+> unregistering is possible but re-registering takes minutes:
+>
+> ```bash
+> az feature list --namespace Microsoft.ContainerService \
+>   --query "[?properties.state=='Registered'].name" -o tsv     # what is already on
+> # az feature unregister --namespace Microsoft.ContainerService --name JWTAuthenticatorPreview
+> ```
+>
+> A side effect of the extension: every later `az aks` command prints
+> `WARNING: The behavior of this command has been altered by the following
+> extension: aks-preview`. That is expected, not a problem.
+
+```bash
+az extension add --name aks-preview                                    # once per workstation
+# "No stable version ... Preview versions allowed" and "already installed" are
+# both normal: aks-preview only ever ships preview builds.
+
+az feature register --namespace Microsoft.ContainerService --name JWTAuthenticatorPreview
+az feature show --namespace Microsoft.ContainerService --name JWTAuthenticatorPreview \
+  --query properties.state -o tsv                                      # wait for "Registered"
+az provider register --namespace Microsoft.ContainerService            # after it shows Registered
+```
+
+`infra/jwtauthenticator/dex.json` carries the claim mappings. **Its `issuer.url`
+is environment-specific** — it must be `https://dex.$HOST` for *this* cluster, so
+check it before applying:
+
+```bash
+grep -A2 '"issuer"' infra/jwtauthenticator/dex.json     # url must be https://dex.$HOST
+
+az aks jwtauthenticator add -g $CLUSTER_RG --cluster-name $CLUSTER \
+  --name dex --config-file infra/jwtauthenticator/dex.json
+# use `update` instead of `add` if one already exists
+```
+
+This maps a Dex token to a cluster identity: the user becomes
+`aks:jwt:<github-login>`, and each GitHub team becomes
+`aks:jwt:<org>:<Team Display Name>` — the **display name verbatim, spaces
+included**, not the slug.
+
+## 8c. Grant the infra team cluster-admin
+
+RBAC still has to say what those identities may do. Bind the infra team's group
+string to `cluster-admin` (adjust the team name if yours differs):
+
+```bash
+kubectl create clusterrolebinding webservices-infra-admin \
+  --clusterrole=cluster-admin \
+  --group="aks:jwt:Scouterna:Webservices Infra"
+```
+
+> **Read the group string from a real token — do not guess it.** After someone
+> logs in to Headlamp once, Dex logs the exact groups it emitted:
+> ```bash
+> kubectl -n dex logs deploy/dex | grep "login successful" | tail -1
+> ```
+> Prefix each with `aks:jwt:` to get the RBAC string. A mismatched name (slug vs
+> display name, or a differing space) fails **silently** — the login succeeds and
+> the user simply sees nothing.
+
+Project developers are *not* granted here — they get per-namespace RoleBindings
+through the normal onboarding flow (see [onboarding.md](onboarding.md) section B).
+
 ## 9. Fill the manifest placeholders, then commit + push
 
 Gather the remaining values, then fill the `<...>` placeholders in the manifests.
