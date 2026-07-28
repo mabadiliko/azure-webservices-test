@@ -448,7 +448,18 @@ an unpushed edit has no effect. Push before applying the root app (§10), and ag
 whenever you change a filled-in value later:
 
 ```bash
-git commit -am "Fill infra client-ids / vault URL"
+# Stage exactly the five files from the table above — never `git add -A`/`-u`,
+# which would sweep up anything else you happen to have modified.
+git add k8s/argocd/infra-apps/external-secrets.yaml \
+        k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml \
+        k8s/infra-manifest/dex/values.yaml \
+        k8s/argocd/infra-apps/velero.yaml \
+        k8s/infra-manifest/external-secrets/clustersecretstore.yaml
+
+git diff --cached          # review: only the placeholders you filled should appear
+git status --short         # anything still unstaged is intentionally left out
+
+git commit -m "Fill infra client-ids / vault URL"
 git push
 ```
 
