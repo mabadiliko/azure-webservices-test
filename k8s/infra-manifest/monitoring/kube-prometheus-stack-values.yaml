@@ -57,17 +57,14 @@ grafana:
       allow_sign_up: true
       # Only members of the Scouterna GitHub org may log in.
       allowed_organizations: Scouterna
-      # Map GitHub teams -> Grafana roles. Replace the team slugs/numbers with
-      # the real Scouterna teams. Everyone in the org who is not matched gets the
-      # default role from [auth] (Viewer, set below).
+      # Team SLUG, not display name. A wrong slug silently falls through to Viewer.
       role_attribute_path: >-
-        contains(groups[*], '@scouterna/infra') && 'Admin' ||
-        contains(groups[*], '@scouterna/webservices') && 'Editor' ||
+        contains(groups[*], '@scouterna/webservices-infra') && 'Admin' ||
         'Viewer'
       skip_org_role_sync: false
 
     auth:
-      # New GitHub users who match no team get Viewer, not Editor.
+      # Break-glass: keep enabled, a bad role_attribute_path locks everyone to Viewer.
       disable_login_form: false
       oauth_auto_login: false
     users:

@@ -169,6 +169,34 @@ RoleBindings grant.
 
 [kubelogin]: https://github.com/int128/kubelogin
 
+### Grafana (metrics and logs)
+
+Grafana uses the same GitHub login, but a **separate** permission model from
+Headlamp/kubectl — it is not driven by your RoleBindings.
+
+| GitHub team | Grafana role | Can |
+|---|---|---|
+| `Scouterna/Webservices Infra` | Admin | Everything, incl. datasources and users |
+| Any other Scouterna member | Viewer | Read dashboards |
+
+Membership of the **Scouterna org** is all that is required to log in. There is
+no Editor tier: infra dashboards live in Git under
+`k8s/infra-manifest/monitoring/dashboards/` and are loaded by the Grafana
+sidecar, so dashboards are added by pull request, not authored in the UI.
+
+Two consequences worth knowing:
+
+- **Roles are re-derived from GitHub on every login.** Changing someone's role in
+  the Grafana UI works until they next sign in, then reverts. Team membership is
+  the source of truth; the UI role dropdown is effectively read-only.
+- **A role limits what you can *do*, not what you can *see*.** Grafana queries a
+  single shared Prometheus and Loki, so any Viewer can read any namespace's
+  metrics and logs — including through Explore, with no dashboard involved.
+  Kubernetes RBAC does **not** apply to these queries. Per-project data
+  isolation is a separate, unimplemented design; until it exists, treat
+  everything in Grafana as visible to all of Scouterna, and keep genuinely
+  sensitive values out of logs.
+
 ## C. The project's own workload (optional ArgoCD registration)
 
 Layer 2 is the project's choice — it can just `helm install` / `kubectl apply`
