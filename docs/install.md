@@ -400,34 +400,48 @@ Gather the remaining values, then fill the `<...>` placeholders in the manifests
 These are Azure identifiers, not secrets — safe to commit.
 
 ```bash
+# Read the three values only the running cluster / identities can give us.
 ESO_CLIENT_ID=$(az identity show -g $INFRA_RG -n $ESO_IDENTITY --query clientId -o tsv)
 VELERO_CLIENT_ID=$(az identity show -g $INFRA_RG -n $VELERO_IDENTITY --query clientId -o tsv)
 NODE_RESOURCE_GROUP=$(az aks show -g $CLUSTER_RG -n $CLUSTER --query nodeResourceGroup -o tsv)
+
+# Printed in the SAME ORDER as the edits below, one per line, so you can work
+# straight down the list.
 echo "ESO_CLIENT_ID=$ESO_CLIENT_ID"
+echo "GRAFANA_GITHUB_CLIENT_ID=$GRAFANA_GITHUB_CLIENT_ID"
+echo "DEX_GITHUB_CLIENT_ID=$DEX_GITHUB_CLIENT_ID"
 echo "VELERO_CLIENT_ID=$VELERO_CLIENT_ID"
+echo "BACKUP_STORAGE_ACCOUNT=$BACKUP_STORAGE_ACCOUNT"
+echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
 echo "NODE_RESOURCE_GROUP=$NODE_RESOURCE_GROUP"
-echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID  BACKUP_STORAGE_ACCOUNT=$BACKUP_STORAGE_ACCOUNT  KEY_VAULT_NAME=$KEY_VAULT_NAME"
-echo "GRAFANA_GITHUB_CLIENT_ID=$GRAFANA_GITHUB_CLIENT_ID           # Grafana app, from §2a"
-echo "DEX_GITHUB_CLIENT_ID=$DEX_GITHUB_CLIENT_ID   # Dex app, from §2b"
+echo "KEY_VAULT_NAME=$KEY_VAULT_NAME"
 ```
 
-Fill each `<PLACEHOLDER>` with the matching value:
+Every placeholder is named for exactly one variable, so the rule is always
+**`<NAME>` takes `$NAME`**. Work down the list in the order printed above:
 
-- `k8s/argocd/infra-apps/external-secrets.yaml` → `<ESO_CLIENT_ID>` = `$ESO_CLIENT_ID`.
-- `k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml` →
-  `<GRAFANA_GITHUB_CLIENT_ID>` = `$GRAFANA_GITHUB_CLIENT_ID` (the **Grafana** app, §2a).
-- `k8s/infra-manifest/dex/values.yaml` → `<DEX_GITHUB_CLIENT_ID>` =
-  `$DEX_GITHUB_CLIENT_ID` (the **Dex** app, §2b).
+| # | File | Placeholder(s) to replace |
+|---|---|---|
+| 1 | `k8s/argocd/infra-apps/external-secrets.yaml` | `<ESO_CLIENT_ID>` |
+| 2 | `k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml` | `<GRAFANA_GITHUB_CLIENT_ID>` |
+| 3 | `k8s/infra-manifest/dex/values.yaml` | `<DEX_GITHUB_CLIENT_ID>` |
+| 4 | `k8s/argocd/infra-apps/velero.yaml` | `<VELERO_CLIENT_ID>`, `<BACKUP_STORAGE_ACCOUNT>`, `<SUBSCRIPTION_ID>` (**twice**), `<NODE_RESOURCE_GROUP>` |
+| 5 | `k8s/infra-manifest/external-secrets/clustersecretstore.yaml` | `<KEY_VAULT_NAME>` (inside `vaultUrl`) |
 
-> Each placeholder is named for exactly one variable, so `<NAME>` always takes
-> `$NAME`. The two GitHub client ids are **different values from different OAuth
-> apps** — mixing them up breaks that login, which is why neither is called just
-> `GITHUB_CLIENT_ID`.
-- `k8s/argocd/infra-apps/velero.yaml` → `<VELERO_CLIENT_ID>` = `$VELERO_CLIENT_ID`,
-  `<BACKUP_STORAGE_ACCOUNT>` = `$BACKUP_STORAGE_ACCOUNT`, `<SUBSCRIPTION_ID>` = `$SUBSCRIPTION_ID`,
-  `<NODE_RESOURCE_GROUP>` = `$NODE_RESOURCE_GROUP`.
-- `k8s/infra-manifest/external-secrets/clustersecretstore.yaml` → the `vaultUrl`
-  host `<KEY_VAULT_NAME>` = `$KEY_VAULT_NAME`.
+> The two GitHub client ids (rows 2 and 3) are **different values from different
+> OAuth apps** — mixing them up breaks that login. That is why neither is called
+> just `GITHUB_CLIENT_ID`.
+
+> **Velero's two `resourceGroup` values are different on purpose** (row 4): the
+> backup storage location takes `$BACKUP_STORAGE_ACCOUNT`'s resource group
+> (`$INFRA_RG`), while the volume snapshot location takes `$NODE_RESOURCE_GROUP`
+> — that is where the cluster's disks live. Swapping them breaks backups.
+
+Check nothing was missed before committing — this should print nothing:
+
+```bash
+grep -rn "<[A-Z_]\+>" k8s/ --include=*.yaml | grep -v "^\S*:[0-9]*: *#"
+```
 
 **Then commit and push.** ArgoCD syncs from the Git repo, not your working tree —
 an unpushed edit has no effect. Push before applying the root app (§10), and again
