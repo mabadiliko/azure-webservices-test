@@ -581,6 +581,38 @@ IPv6-only validation paths.
 
 ---
 
+## What you can now reach
+
+Once DNS resolves and certificates have issued, the cluster exposes three web
+endpoints. Confirm each one before calling the install done:
+
+```bash
+for u in grafana headlamp dex; do
+  curl -sS --max-time 10 -o /dev/null -w "%{http_code}  https://$u.$HOST\n" "https://$u.$HOST"
+done
+kubectl get ingress -A          # the authoritative list of what is published
+```
+
+| Endpoint | Expected | What it is | Login |
+|---|---|---|---|
+| `https://grafana.$HOST` | `302` → login | Dashboards, metrics, logs | GitHub OAuth (§2a); break-glass admin in Key Vault |
+| `https://headlamp.$HOST` | `200` | Kubernetes UI | GitHub SSO via Dex (§2b) |
+| `https://dex.$HOST` | `200` on `/.well-known/openid-configuration` | OIDC provider — not a UI | n/a; it backs Headlamp + `kubectl` |
+
+A `302` from Grafana and `200` from Headlamp mean the ingress, TLS and routing all
+work — that is the install-level check. Whether the **login** then succeeds is a
+separate, GitHub-side question:
+
+> **Serving correctly but login rejected?** Dex only admits members of the org
+> named in `orgs:` in `k8s/infra-manifest/dex/values.yaml` (`Scouterna`). That is
+> independent of which org *owns* the OAuth App — an app registered under a
+> different org still authenticates you, then Dex rejects you with **"user not in
+> required orgs or teams"**. Either join the required org, or point `orgs:` at the
+> org your testers actually belong to. Same applies to Grafana's
+> `role_attribute_path` team slugs (§2a).
+
+There is deliberately **no ArgoCD endpoint** — see the next section.
+
 ## ArgoCD access — pure GitOps, no exposed GUI
 
 ArgoCD is operated **declaratively**: all config is in Git, changes happen by
