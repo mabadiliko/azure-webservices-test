@@ -84,3 +84,17 @@ resultsCache:
   resources:
     requests:
       cpu: 50m
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kps
+  # Loki's bundled self-monitoring stack (its own Grafana Agent + a `loki-canary`
+  # write-path probe). Alloy already ships logs, so this would duplicate it.
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false
+  lokiCanary:
+    enabled: false

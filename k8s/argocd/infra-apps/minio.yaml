@@ -26,6 +26,12 @@ spec:
     - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
       targetRevision: main
       ref: values
+    # ServiceMonitor as a plain manifest — see values.yaml for why not the chart's.
+    - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+      targetRevision: main
+      path: k8s/infra-manifest/minio
+      directory:
+        include: 'servicemonitor.yaml'
   syncPolicy:
     automated:
       prune: true

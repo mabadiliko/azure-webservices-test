@@ -33,3 +33,8 @@ existingSecret: minio-root
 
 # No ingress for MinIO in the test round — accessed in-cluster only.
 # (A console/API ingress can be added later behind Traefik if needed.)
+
+# NOTE: the chart's own metrics.serviceMonitor is NOT used. Its template requires
+# `includeNode` as well as `enabled`, and hardcodes `release: {{ .Release.Name }}`
+# (= minio), which our Prometheus ignores (it selects release=kps). The monitor is
+# a plain manifest instead: k8s/infra-manifest/minio/servicemonitor.yaml
