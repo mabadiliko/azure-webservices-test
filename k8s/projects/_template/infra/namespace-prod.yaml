@@ -1,4 +1,4 @@
-# Prod namespace for the project. Rename PROJECT to the project's name.
+# Prod namespace for the project.
 apiVersion: v1
 kind: Namespace
 metadata:

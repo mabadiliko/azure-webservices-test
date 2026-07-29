@@ -36,57 +36,69 @@ is excluded.
 
 ## A. Create the project and its namespace(s)
 
-1. **Copy the template and name it.** Copy `k8s/projects/_template/` to
-   `k8s/projects/<project>/`, where `<project>` is your project's name. `PROJECT`
-   is a placeholder inside several of the files; replace every occurrence at once.
-   Run this **from the repo root**, substituting your project name in **both**
-   places (the path to edit, and the replacement text):
-   ```bash
-   # template form — replace <project> in both spots with your project name:
-   grep -rlZ PROJECT k8s/projects/<project>/ | xargs -0 sed -i "s/PROJECT/<project>/g"
-   ```
-   For example, for a project named `proj-scoutid`:
-   ```bash
-   grep -rlZ PROJECT k8s/projects/proj-scoutid/ | xargs -0 sed -i "s/PROJECT/proj-scoutid/g"
-   ```
-   This finds every file under your project dir that contains `PROJECT` and
-   replaces it in place — including the `chart/` and `.example` files, so they're
-   ready when you activate them later.
+1. **Copy the template and name it.** Set the project name once, then run the
+   block **from the repo root**. It copies `k8s/projects/_template/` to
+   `k8s/projects/$PROJECT/` and replaces the `PROJECT` placeholder everywhere it
+   appears — including `chart/` and the `.example` files, so they are ready when
+   you activate them later.
 
-   (`GITHUB_LOGIN` in `developer-rbac.yaml.example` is a separate placeholder —
-   leave it; it's filled per developer in [section B](#b-developer-access-github-sso).)
+   ```bash
+   export PROJECT=<project name>           # the only thing to set
+
+   set -euo pipefail
+   [ -d k8s/projects/_template ] || { echo "run this from the repo root"; exit 1; }
+   [ -e "k8s/projects/$PROJECT" ] && { echo "k8s/projects/$PROJECT already exists"; exit 1; }
+
+   cp -r k8s/projects/_template "k8s/projects/$PROJECT"
+   rm -f "k8s/projects/$PROJECT/.gitkeep"
+   grep -rlZ PROJECT "k8s/projects/$PROJECT/" | xargs -0 sed -i "s/PROJECT/$PROJECT/g"
+
+   find "k8s/projects/$PROJECT" -type f | sort
+   grep -rn PROJECT "k8s/projects/$PROJECT/" || echo "no PROJECT placeholders left — good"
+   ```
+
+   The last line must print `no PROJECT placeholders left`. Keep `$PROJECT` set —
+   the rest of this section uses it.
+
+   (`GITHUB_LOGIN` in `developer-rbac.yaml.example` is a **separate** placeholder
+   and is deliberately left alone — it's filled per developer in
+   [section B](#b-developer-access-github-sso).)
 
 2. **Choose the namespace(s).** The template ships `namespace-dev.yaml` and
    `namespace-prod.yaml` as the common case, but the set is **flexible** — the
    ApplicationSet syncs `infra/namespace.yaml` **and** any
    `infra/namespace-*.yaml`. Add or delete files to match what the project needs:
 
-   - **dev + prod (default):** keep both files as-is.
-   - **one namespace only:** delete `namespace-prod.yaml`, rename
-     `namespace-dev.yaml` to `namespace.yaml`, and inside it set the namespace
-     `name` to just `<project>` (drop the `-dev` suffix) and remove the
-     `scouterna.se/env` label. For example, `proj-scoutid`:
-     ```yaml
-     # Namespace for proj-scoutid.
-     apiVersion: v1
-     kind: Namespace
-     metadata:
-       name: proj-scoutid
-       labels:
-         scouterna.se/project: proj-scoutid
+   - **dev + prod (default):** keep both files as-is — nothing to do.
+   - **one namespace only:** collapse to a single `namespace.yaml` named just
+     `$PROJECT` (no `-dev` suffix, no `env` label):
+     ```bash
+     cd "k8s/projects/$PROJECT/infra"
+     rm namespace-prod.yaml
+     mv namespace-dev.yaml namespace.yaml
+     sed -i -e "s/^  name: $PROJECT-dev\$/  name: $PROJECT/" \
+            -e '/scouterna\.se\/env:/d' namespace.yaml
+     cat namespace.yaml && cd -
      ```
-   - **add staging:** copy a namespace file to `namespace-staging.yaml` and set
-     its `name`/`env` accordingly.
+   - **add staging:** `sed 's/dev/staging/g' namespace-dev.yaml > namespace-staging.yaml`
+     (from the project's `infra/` dir), then check the result.
 
    > Filenames must be `namespace.yaml` or `namespace-<something>.yaml` — that is
    > what the ApplicationSet's include glob matches.
 
-   Then **commit** — ArgoCD creates the namespace(s). Confirm:
+3. **Commit** — ArgoCD creates the namespace(s):
    ```bash
-   kubectl get ns -l scouterna.se/project=<project>
+   git add "k8s/projects/$PROJECT"
+   git commit -m "Onboard $PROJECT"
+   git push
+   ```
+   Then confirm (may take a minute for ArgoCD to sync):
+   ```bash
+   kubectl get ns -l "scouterna.se/project=$PROJECT"
+   kubectl get application -n argocd | grep "$PROJECT"
    ```
 
-2. **No ResourceQuota / LimitRange is applied.** The project owns the namespace.
+4. **No ResourceQuota / LimitRange is applied.** The project owns the namespace.
 
 ## B. Developer access (GitHub SSO)
 
