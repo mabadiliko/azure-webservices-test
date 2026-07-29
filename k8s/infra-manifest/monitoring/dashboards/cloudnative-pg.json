@@ -9148,7 +9148,15 @@
         "type": "datasource"
       },
       {
-        "current": {},
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ],
+          "selected": true
+        },
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -9156,9 +9164,9 @@
         "definition": "label_values(controller_runtime_webhook_requests_total{webhook=\"/mutate-postgresql-cnpg-io-v1-cluster\"},namespace)",
         "description": "Namespace where the CNPG operator is located",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "label": "Operator Namespace",
-        "multi": false,
+        "multi": true,
         "name": "operatorNamespace",
         "options": [],
         "query": {
@@ -9170,10 +9178,19 @@
         "regex": "",
         "skipUrlSync": false,
         "sort": 0,
-        "type": "query"
+        "type": "query",
+        "allValue": ".*"
       },
       {
-        "current": {},
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ],
+          "selected": true
+        },
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -9181,9 +9198,9 @@
         "definition": "cnpg_collector_up",
         "description": "Namespace where the database cluster is located",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "label": "Database Namespace",
-        "multi": false,
+        "multi": true,
         "name": "namespace",
         "options": [],
         "query": {
@@ -9194,10 +9211,19 @@
         "regex": "/namespace=\"(?<text>[^\"]+)/g",
         "skipUrlSync": false,
         "sort": 0,
-        "type": "query"
+        "type": "query",
+        "allValue": ".*"
       },
       {
-        "current": {},
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ],
+          "selected": true
+        },
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
@@ -9205,9 +9231,9 @@
         "definition": "cnpg_collector_up{namespace=~\"$namespace\"}",
         "description": "CNPG Cluster",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "label": "Cluster",
-        "multi": false,
+        "multi": true,
         "name": "cluster",
         "options": [],
         "query": {
@@ -9218,11 +9244,20 @@
         "regex": "/\\bcluster\\b=\"(?<text>[^\"]+)/g",
         "skipUrlSync": false,
         "sort": 1,
-        "type": "query"
+        "type": "query",
+        "allValue": ".*"
       },
       {
         "allValue": "$cluster-([1-9][0-9]*)",
-        "current": {},
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ],
+          "selected": true
+        },
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"

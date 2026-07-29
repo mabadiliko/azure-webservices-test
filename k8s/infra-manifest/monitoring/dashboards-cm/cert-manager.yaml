@@ -1202,7 +1202,15 @@ data:
           },
           {
             "allValue": ".*",
-            "current": {},
+            "current": {
+              "text": [
+                "All"
+              ],
+              "value": [
+                "$__all"
+              ],
+              "selected": true
+            },
             "datasource": "$Datasource",
             "definition": "label_values(exported_namespace)",
             "hide": 0,
@@ -1224,7 +1232,15 @@ data:
           },
           {
             "allValue": ".*",
-            "current": {},
+            "current": {
+              "text": [
+                "All"
+              ],
+              "value": [
+                "$__all"
+              ],
+              "selected": true
+            },
             "datasource": "$Datasource",
             "definition": "label_values(certmanager_certificate_expiration_timestamp_seconds{exported_namespace=~\"$Namespace\"},name) ",
             "hide": 0,
