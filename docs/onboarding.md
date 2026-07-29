@@ -131,11 +131,8 @@ kubectl auth can-i create deployments -n <namespace> \
   --as=anyone --as-group="aks:jwt:<org>:<Team Display Name>"
 ```
 
-> **Verify the exact team string from a real login** before relying on a team
-> binding — the group uses the team's display name **verbatim, spaces included**
-> (e.g. `aks:jwt:Scouterna:WSJ27 Crew`). Check Dex's "login successful" log line
-> for a team member: its `groups=[…]` shows the precise strings. A mismatched
-> binding silently grants nothing.
+> **Read the exact group string from the system that emits it** — never
+> reconstruct it by rule. See [Verifying identity strings](#verifying-identity-strings).
 
 > The file stays a **`.example`** in the template so ArgoCD never syncs the
 > unfilled placeholders. Only the real, renamed `developer-rbac.yaml` is applied.
@@ -196,6 +193,47 @@ Two consequences worth knowing:
   isolation is a separate, unimplemented design; until it exists, treat
   everything in Grafana as visible to all of Scouterna, and keep genuinely
   sensitive values out of logs.
+
+### Verifying identity strings
+
+Three places match on a GitHub-derived identity string, and **each uses a
+different format**. All three fail the same way: a wrong string is not an error,
+it simply never matches, so the user silently gets less access than intended.
+
+| Where | Format | Example |
+|---|---|---|
+| Kubernetes RBAC (Headlamp, kubectl) | `aks:jwt:<Org>:<Team Display Name>` — display name verbatim, spaces included | `aks:jwt:Scouterna:WSJ27 Crew` |
+| Grafana `role_attribute_path` | `@<Org>/<team-slug>` — org keeps its casing, slug lowercased and hyphenated | `@Scouterna/webservices-infra` |
+| Dex `groups` claim | `<Org>:<Team Display Name>` | `Scouterna:Webservices Infra` |
+
+Note the traps: RBAC wants the **display name**, Grafana wants the **slug**, and
+the org keeps its capital `S` in all of them while the slug does not. Swedish
+characters are transliterated in slugs (`E-tjänster` → `e-tjanster`). JMESPath
+`contains()` in Grafana is case-sensitive.
+
+Never derive these by applying the rules above — print the real value:
+
+```bash
+# Grafana: the exact strings Grafana compares against, for YOUR account
+gh api /user/teams --paginate --jq '.[] | "@\(.organization.login)/\(.slug)"'
+
+# All team slugs and display names in the org
+gh api /orgs/Scouterna/teams --paginate --jq '.[] | "\(.slug)\t\(.name)"'
+
+# Kubernetes RBAC / Dex: from a real login by a team member
+kubectl -n dex logs deploy/dex | grep "login successful"
+```
+
+Then confirm the binding actually grants what you expect:
+
+```bash
+kubectl auth can-i create deployments -n <namespace> \
+  --as=anyone --as-group="aks:jwt:<Org>:<Team Display Name>"
+```
+
+For Grafana, the only real test is a fresh sign-out and sign-in: the role is
+computed at login, so an existing session keeps its old role, and a running
+Grafana keeps its old config until the pod restarts.
 
 ## C. The project's own workload (optional ArgoCD registration)
 

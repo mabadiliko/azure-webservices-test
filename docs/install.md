@@ -365,7 +365,9 @@ kubectl get nodes -o wide                        # Ready, Standard_D4as_v5, Azur
 kubectl -n kube-system get pods | grep cilium    # cilium + cilium-operator Running (eBPF dataplane)
 ```
 
-The `--admin` kubeconfig is the infra bootstrap credential.
+The `--admin` kubeconfig is the infra bootstrap credential — a static cert that
+bypasses Dex and RBAC entirely. It is **deleted in §12** once developer SSO is
+proven; re-runnable at any time if you need it back.
 
 ---
 
@@ -786,13 +788,51 @@ separate, GitHub-side question:
 
 There is deliberately **no ArgoCD endpoint** — see the next section.
 
+## 12. Retire the admin kubeconfig
+
+`.kube-webservices` (§7b) is the **cluster admin credential** — a static
+certificate that bypasses Dex, ignores RBAC, and cannot be revoked short of
+rotating the cluster's CA. It exists only to bootstrap a cluster that has no
+working SSO yet. Once Dex does work, it is pure liability, so delete it:
+
+```bash
+# Prove SSO works BEFORE deleting the fallback — this must print nodes.
+kubectl --kubeconfig k8s/access/oidc-kubeconfig get nodes
+
+# Only then:
+unset KUBECONFIG
+rm -f .kube-webservices
+```
+
+From here on, use the shared OIDC kubeconfig — your own GitHub identity, subject
+to the RBAC from §8c:
+
+```bash
+export KUBECONFIG=$PWD/k8s/access/oidc-kubeconfig
+kubectl get applications -n argocd
+```
+
+> **Do not delete it earlier.** Steps 9–11 and Troubleshooting below run against
+> a cluster that may not be healthy yet, and some of that debugging is exactly
+> what you would need if Dex itself were broken. Admin is the fallback for that
+> case, so it has to outlive the checks that prove SSO works.
+
+> **If you need it again**, re-run the §7b command — it re-issues the same admin
+> credential from Azure at any time. Nothing is lost by deleting it, which is
+> the point: keep a permanent bypass on disk only while it is earning its keep.
+
+`.kube-*` is gitignored, so it was never committed; deleting it removes the copy
+on your workstation. Anyone with the file has full cluster control regardless of
+GitHub org membership, team, or RBAC.
+
 ## ArgoCD access — pure GitOps, no exposed GUI
 
 ArgoCD is operated **declaratively**: all config is in Git, changes happen by
 commit → auto-sync. There is deliberately **no ArgoCD ingress and no GUI login** —
 smaller attack surface, matches the "everything in Git" model.
 
-- **Observe** with `kubectl -n argocd get applications`.
+- **Observe** with `kubectl -n argocd get applications` (via the OIDC kubeconfig —
+  infra-team members have cluster-admin through §8c).
 - **Debug** a stuck sync via a temporary
   `kubectl -n argocd port-forward svc/argocd-server 8080:443`, logging in with the
   break-glass admin (`kubectl -n argocd get secret argocd-initial-admin-secret
