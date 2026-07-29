@@ -85,6 +85,17 @@ grafana:
 
   # Explicit uids: vendored dashboards reference datasources by UID, and without
   # one here Grafana generates a random uid per install.
+  #
+  # deleteDatasources runs before provisioning and is required to CHANGE a uid:
+  # Grafana stores datasources in its database and provisioning only sets the uid
+  # on create, so an existing Loki/Thanos keeps its old random uid forever
+  # (the API refuses too — "cannot delete read-only data source"). Harmless to
+  # keep: on a fresh install there is nothing to delete.
+  deleteDatasources:
+    - name: Loki
+      orgId: 1
+    - name: Thanos
+      orgId: 1
   additionalDataSources:
     - name: Loki
       uid: loki
