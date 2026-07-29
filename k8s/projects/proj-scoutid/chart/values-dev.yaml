@@ -1,0 +1,20 @@
+# DEV environment — stated completely. Nothing is inherited; a value only
+# applies to dev if it is here. Copy the chart, then edit this file for dev.
+name: proj-scoutid
+namespace: proj-scoutid-dev
+replicas: 1
+image:
+  repository: ghcr.io/scouterna/proj-scoutid
+  tag: latest
+containerPort: 8080
+env: []
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+ingress:
+  enabled: true
+  host: proj-scoutid.dev.example.se
+  clusterIssuer: letsencrypt-staging
