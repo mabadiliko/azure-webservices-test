@@ -18,13 +18,30 @@ does not depend on grafana.com being reachable.
 | `external-secrets.json` | [external-secrets repo][eso] | |
 | `minio.json` | [minio repo][minio] | Scraped via `minio/servicemonitor.yaml`, not the chart |
 | `thanos-query.json` / `-store` / `-compact` | [thanos repo][thanos] | |
-| `loki.json` | [loki repo][loki] | |
+| `loki.json` | [loki repo][loki] `loki-chunks` | **Adapted**, see below |
 | `namespace-usage.json` | hand-written | Shipped via `governance/`, not here |
 
 [eso]: https://github.com/external-secrets/external-secrets/blob/main/docs/snippets/dashboard.json
 [minio]: https://github.com/minio/minio/blob/master/docs/metrics/prometheus/grafana/minio-dashboard.json
 [thanos]: https://github.com/thanos-io/thanos/tree/main/examples/dashboards
 [loki]: https://github.com/grafana/loki/tree/main/production/loki-mixin-compiled/dashboards
+
+## Loki: single-binary vs microservices
+
+Most Loki mixin dashboards — including the obvious `loki-operational` — assume
+**microservices mode** and query per-component jobs (`$namespace/distributor`,
+`/query-frontend`, `/ingester`). We run **single-binary mode**, where the only
+job is `<namespace>/loki`, so those panels can never return data. Several also
+need mixin *recording rules* (`cluster_job:...:sum_rate`) that we do not install.
+
+`loki-chunks` was chosen because it needs neither. Its component-job patterns
+(`$namespace/(.*ingester.*)`) are rewritten to `$namespace/loki`. If you swap in
+another Loki dashboard, check both before trusting it:
+
+```bash
+grep -c 'distributor\|query-frontend\|ingester\|querier' new.json   # component jobs
+grep -c ':sum_rate\|cluster_job' new.json                            # recording rules
+```
 
 ## Regenerating the ConfigMaps
 
@@ -51,6 +68,15 @@ PY
 ```
 
 Commit **both** the JSON and the regenerated `dashboards-cm/*.yaml`.
+
+> **Changing a dashboard's `uid` needs a Grafana restart.** Provisioning
+> reconciles by uid, not filename, so replacing a file's contents with a
+> dashboard that has a *different* uid leaves the old one registered and never
+> inserts the new one — and the sidecar still logs a successful reload, so the
+> 200 OK proves nothing. Editing a dashboard in place is picked up live.
+> ```bash
+> kubectl -n monitoring rollout restart deployment/kps-grafana
+> ```
 
 ## Adding a new dashboard
 
