@@ -1885,7 +1885,7 @@ data:
           {
             "current": {
               "text": "Prometheus",
-              "value": "Prometheus",
+              "value": "prometheus",
               "selected": true
             },
             "hide": 0,

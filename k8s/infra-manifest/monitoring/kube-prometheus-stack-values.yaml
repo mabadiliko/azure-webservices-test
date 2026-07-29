@@ -29,27 +29,27 @@ grafana:
       cert-manager.io/cluster-issuer: "letsencrypt-prod"
       acme.cert-manager.io/http01-ingress-class: "traefik"
     hosts:
-      - grafana.wsv2test.j26.se
+      - grafana.wsinfra.scouterna.net
     path: /
     tls:
       - secretName: grafana-wsinfra-scouterna-net-tls
         hosts:
-          - grafana.wsv2test.j26.se
+          - grafana.wsinfra.scouterna.net
 
   grafana.ini:
     server:
-      domain: grafana.wsv2test.j26.se
-      root_url: https://grafana.wsv2test.j26.se
+      domain: grafana.wsinfra.scouterna.net
+      root_url: https://grafana.wsinfra.scouterna.net
 
     # Daily login = GitHub OAuth, restricted to the Scouterna org.
     # Create a GitHub OAuth App (Scouterna org -> Settings -> Developer settings
-    # -> OAuth Apps): Homepage https://grafana.wsv2test.j26.se,
-    # callback https://grafana.wsv2test.j26.se/login/github.
+    # -> OAuth Apps): Homepage https://grafana.wsinfra.scouterna.net,
+    # callback https://grafana.wsinfra.scouterna.net/login/github.
     # Put the Client ID below; the Client Secret comes from the mounted secret
     # (GF_AUTH_GITHUB_CLIENT_SECRET__FILE above), not this file.
     auth.github:
       enabled: true
-      client_id: Ov23liQDmm14U0jTCkT5
+      client_id: <GRAFANA_GITHUB_CLIENT_ID>
       scopes: user:email,read:org
       auth_url: https://github.com/login/oauth/authorize
       token_url: https://github.com/login/oauth/access_token
@@ -83,8 +83,11 @@ grafana:
     storageClassName: disk-standardssd
     size: 8Gi
 
+  # Explicit uids: vendored dashboards reference datasources by UID, and without
+  # one here Grafana generates a random uid per install.
   additionalDataSources:
     - name: Loki
+      uid: loki
       type: loki
       access: proxy
       url: http://loki-gateway.monitoring.svc.cluster.local
@@ -94,6 +97,7 @@ grafana:
     # sidecar + the MinIO-backed store gateway). Prometheus-compatible API on
     # the thanos-query service (HTTP port 10902).
     - name: Thanos
+      uid: thanos
       type: prometheus
       access: proxy
       url: http://thanos-query.monitoring.svc.cluster.local:10902
