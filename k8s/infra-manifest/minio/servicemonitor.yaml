@@ -15,6 +15,9 @@ spec:
   selector:
     matchLabels:
       app: minio
+      # Excludes the minio-console Service, which carries app=minio but serves
+      # HTML on 9001 — scraping it fails with "unsupported Content-Type text/html".
+      monitoring: "true"
   endpoints:
     - port: http
       path: /minio/v2/metrics/cluster
