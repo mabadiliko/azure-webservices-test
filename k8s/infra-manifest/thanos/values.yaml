@@ -29,24 +29,25 @@ queryFrontend:
   enabled: false
 
 # Store gateway: serves historical blocks from object storage.
+# persistence off (chart default): the volume is only a local index cache — the
+# blocks themselves live in the MinIO bucket. A restart re-downloads the cache,
+# costing slower first queries, not data. Azure caps attachable disks per node
+# (8 on D4as_v5) and that limit, not CPU, is what this cluster runs out of first.
 storeGateway:
   enabled: true
   replicas: 1
   persistence:
-    enabled: true
-    storageClass: disk-standardssd
-    size: 8Gi
+    enabled: false
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
 
 # Compactor: compaction + downsampling + retention on the bucket.
+# persistence off for the same reason — this volume is compaction scratch space.
 compact:
   enabled: true
   persistence:
-    enabled: true
-    storageClass: disk-standardssd
-    size: 8Gi
+    enabled: false
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
