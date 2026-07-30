@@ -30,8 +30,12 @@ spec:
     - group: ''
       kind: Namespace
   # Namespaced resources. RoleBinding/ServiceAccount for developer access;
-  # CNPG + ExternalSecret for the opt-in shared database; PodMonitor so that
-  # database ships its Postgres metrics to the shared Prometheus.
+  # ExternalSecret for the shared-database credentials. The CNPG + PodMonitor
+  # entries are for the escape hatch only — a project that needs its OWN
+  # Postgres instance rather than a database on the shared server. The shared
+  # server's own Database/DatabaseRole are infra-owned and live in
+  # k8s/infra-manifest/postgres/databases/ (CNPG resolves spec.cluster by name
+  # within a namespace, so they cannot live here).
   namespaceResourceWhitelist:
     - group: ''
       kind: ServiceAccount

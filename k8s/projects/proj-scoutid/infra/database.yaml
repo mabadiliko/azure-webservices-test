@@ -7,8 +7,8 @@
 # workloads can connect.
 #
 # Prereqs (see docs/onboarding.md → "Add a database"):
-#   - infra has committed k8s/infra-manifest/postgres/databases/PROJECT.yaml
-#   - the password is in Key Vault as `postgres-PROJECT-password`
+#   - infra has committed k8s/infra-manifest/postgres/databases/proj-scoutid.yaml
+#   - the password is in Key Vault as `postgres-proj-scoutid-password`
 #
 # A project that needs its OWN Postgres instance instead (heavy load, a
 # different major version, an extension the shared server does not carry) can
@@ -17,26 +17,26 @@
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: PROJECT-db
-  namespace: PROJECT-prod
+  name: proj-scoutid-db
+  namespace: proj-scoutid-prod
 spec:
   refreshInterval: 1h
   secretStoreRef:
     name: azure-kv
     kind: ClusterSecretStore
   target:
-    name: PROJECT-db
+    name: proj-scoutid-db
     template:
       type: Opaque
       data:
         # Individual fields, plus a ready-made URL for libraries that want one.
         host: shared-rw.postgres.svc.cluster.local
         port: "5432"
-        dbname: PROJECT
-        username: PROJECT
+        dbname: proj-scoutid
+        username: proj-scoutid
         password: "{{ .password }}"
-        uri: "postgresql://PROJECT:{{ .password }}@shared-rw.postgres.svc.cluster.local:5432/PROJECT"
+        uri: "postgresql://proj-scoutid:{{ .password }}@shared-rw.postgres.svc.cluster.local:5432/proj-scoutid"
   data:
     - secretKey: password
       remoteRef:
-        key: postgres-PROJECT-password
+        key: postgres-proj-scoutid-password

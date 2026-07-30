@@ -1,0 +1,65 @@
+# One project's database on the SHARED Postgres server.
+#
+# Copy to <project>.yaml, replace PROJECT, and commit. The `postgres-databases`
+# infra app syncs this directory.
+#
+# WHY THIS LIVES HERE AND NOT IN k8s/projects/<project>/infra/:
+# CNPG's Database and DatabaseRole reference their Cluster by NAME ONLY
+# (spec.cluster has no namespace field), so both must live in the shared
+# cluster's namespace. Keeping them infra-owned also means a project cannot
+# create objects next to another project's database.
+#
+# Prereqs: the shared cluster is healthy, and a password exists in Key Vault as
+# `postgres-PROJECT-password` (see docs/postgres.md).
+---
+# The role's password, from Key Vault. CNPG *consumes* this Secret; it does not
+# generate one. basic-auth format with username + password is required.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: postgres-PROJECT-role
+  namespace: postgres
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-kv
+    kind: ClusterSecretStore
+  target:
+    name: postgres-PROJECT-role
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: PROJECT
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef:
+        key: postgres-PROJECT-password
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: PROJECT
+  namespace: postgres
+spec:
+  cluster:
+    name: shared
+  ensure: present
+  name: PROJECT
+  login: true
+  passwordSecret:
+    name: postgres-PROJECT-role
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: PROJECT
+  namespace: postgres
+spec:
+  cluster:
+    name: shared
+  ensure: present
+  name: PROJECT
+  owner: PROJECT
+  # retain: dropping the Database resource must not drop the project's data.
+  databaseReclaimPolicy: retain
