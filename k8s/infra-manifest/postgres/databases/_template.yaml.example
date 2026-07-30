@@ -1,7 +1,11 @@
-# One project's database on the SHARED Postgres server.
+# A project's databases on the SHARED Postgres server — dev + prod, the default.
 #
 # Copy to <project>.yaml, replace PROJECT, and commit. The `postgres-databases`
-# infra app syncs this directory.
+# app syncs this directory.
+#
+# Everything lives in ONE server, so database and role names must be unique
+# across all projects — hence the -dev / -prod suffix. Each environment gets its
+# OWN role, so a leaked dev credential cannot reach prod data.
 #
 # WHY THIS LIVES HERE AND NOT IN k8s/projects/<project>/infra/:
 # CNPG's Database and DatabaseRole reference their Cluster by NAME ONLY
@@ -9,15 +13,21 @@
 # cluster's namespace. Keeping them infra-owned also means a project cannot
 # create objects next to another project's database.
 #
-# Prereqs: the shared cluster is healthy, and a password exists in Key Vault as
-# `postgres-PROJECT-password` (see docs/postgres.md).
+# Prereqs: the shared cluster is healthy, and BOTH passwords are in Key Vault as
+# `postgres-PROJECT-dev-password` and `postgres-PROJECT-prod-password`
+# (see docs/postgres.md).
+#
+# ONE environment only? Delete the prod block below and drop the `-dev` suffix
+# everywhere in what remains. ADDING staging? Copy either block and change the
+# suffix — remember its Key Vault password too.
 ---
+# ---------- DEV ----------
 # The role's password, from Key Vault. CNPG *consumes* this Secret; it does not
 # generate one. basic-auth format with username + password is required.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: postgres-PROJECT-role
+  name: postgres-PROJECT-dev-role
   namespace: postgres
 spec:
   refreshInterval: 1h
@@ -25,41 +35,91 @@ spec:
     name: azure-kv
     kind: ClusterSecretStore
   target:
-    name: postgres-PROJECT-role
+    name: postgres-PROJECT-dev-role
     template:
       type: kubernetes.io/basic-auth
       data:
-        username: PROJECT
+        username: PROJECT-dev
         password: "{{ .password }}"
   data:
     - secretKey: password
       remoteRef:
-        key: postgres-PROJECT-password
+        key: postgres-PROJECT-dev-password
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: DatabaseRole
 metadata:
-  name: PROJECT
+  name: PROJECT-dev
   namespace: postgres
 spec:
   cluster:
     name: shared
   ensure: present
-  name: PROJECT
+  name: PROJECT-dev
   login: true
   passwordSecret:
-    name: postgres-PROJECT-role
+    name: postgres-PROJECT-dev-role
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
-  name: PROJECT
+  name: PROJECT-dev
   namespace: postgres
 spec:
   cluster:
     name: shared
   ensure: present
-  name: PROJECT
-  owner: PROJECT
+  name: PROJECT-dev
+  owner: PROJECT-dev
   # retain: dropping the Database resource must not drop the project's data.
+  databaseReclaimPolicy: retain
+---
+# ---------- PROD ----------
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: postgres-PROJECT-prod-role
+  namespace: postgres
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-kv
+    kind: ClusterSecretStore
+  target:
+    name: postgres-PROJECT-prod-role
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: PROJECT-prod
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef:
+        key: postgres-PROJECT-prod-password
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: PROJECT-prod
+  namespace: postgres
+spec:
+  cluster:
+    name: shared
+  ensure: present
+  name: PROJECT-prod
+  login: true
+  passwordSecret:
+    name: postgres-PROJECT-prod-role
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: PROJECT-prod
+  namespace: postgres
+spec:
+  cluster:
+    name: shared
+  ensure: present
+  name: PROJECT-prod
+  owner: PROJECT-prod
   databaseReclaimPolicy: retain
