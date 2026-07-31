@@ -15,7 +15,7 @@ spec:
     # NOTE: globstar (**) is required — a single * does not match across '/', so
     # 'https://github.com/*' would NOT match 'https://github.com/org/repo.git'.
     - 'https://github.com/**'      # tighten to the specific org/repo once the slug is confirmed
-    - 'ghcr.io/scouterna/charts/**' # OCI Helm charts published by Scouterna
+    - 'oci://ghcr.io/scouterna/charts/**' # OCI Helm charts published by Scouterna
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc
