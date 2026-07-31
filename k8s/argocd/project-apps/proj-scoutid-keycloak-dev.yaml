@@ -9,7 +9,8 @@
 #   - Secret proj-scoutid-db      — from infra/database.yaml (ESO → shared Postgres)
 #   - Secret keycloak-admin       — from sealedsecret-keycloak-admin.yaml
 #
-# project: apps-dev, which permits ghcr.io/scouterna/charts/* as a source.
+# project: apps-dev, which permits ghcr.io/scouterna/charts as a source — the
+# bare registry+namespace, since for OCI that is the whole repoURL.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,10 +34,14 @@ spec:
     - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
       targetRevision: main
       ref: values
+  # MANUAL sync — no `automated:`. Dev is hand-driven: the project edits the
+  # release in the cluster and ArgoCD reports the drift as OutOfSync without
+  # touching it. Syncing is a deliberate act (UI, or `argocd app sync`), and a
+  # sync DISCARDS those hand edits by reapplying git.
+  #
+  # A prod Application should do the opposite: automated + selfHeal, so git is
+  # authoritative and nobody edits prod by hand.
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
     syncOptions:
       # The namespace is created by the project's infra/ manifests, not here.
       - CreateNamespace=false
