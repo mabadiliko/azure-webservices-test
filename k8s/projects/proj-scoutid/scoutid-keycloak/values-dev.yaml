@@ -21,9 +21,16 @@ database:
     existingSecret: proj-scoutid-db
 
 # Created out-of-band, not in git. See docs/onboarding.md.
+# Also required by scoutid.enabled — config-cli authenticates as this admin.
 admin:
   bootstrap:
     existingSecret: keycloak-admin
+
+# Imports the ScoutID realm (browser flow, user profile, claim mappers) via
+# keycloak-config-cli. Chart default is true; stated explicitly because without
+# it this is a stock Keycloak that merely contains the JARs.
+scoutid:
+  enabled: true
 
 ingress:
   type: ingress
