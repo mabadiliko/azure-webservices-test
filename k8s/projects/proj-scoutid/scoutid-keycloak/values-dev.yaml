@@ -1,0 +1,46 @@
+# DEV values for the scoutid-keycloak chart (ghcr.io/scouterna/charts).
+# Stated completely — nothing is inherited from prod.
+hostname:
+  public: keycloak.wsv2test.j26.se
+  admin: keycloak-admin.wsv2test.j26.se
+
+image:
+  tag: latest
+
+# The shared CNPG server, so mode is `external` even though it runs in-cluster:
+# `cnpg` mode derives the host and secret from a per-project Cluster we do not have.
+# `name` must match the dbname in the proj-scoutid-db secret.
+database:
+  mode: external
+  external:
+    host: shared-rw.postgres.svc.cluster.local
+    port: 5432
+    name: proj-scoutid-dev
+    sslMode: disable
+  credentials:
+    existingSecret: proj-scoutid-db
+
+# Created out-of-band, not in git. See docs/onboarding.md.
+admin:
+  bootstrap:
+    existingSecret: keycloak-admin
+
+ingress:
+  type: ingress
+  className: traefik
+  clusterIssuer: letsencrypt-prod
+  public:
+    enabled: true
+    paths:
+      - /realms
+      - /resources
+  admin:
+    enabled: true
+    ipAllowList: []
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kps

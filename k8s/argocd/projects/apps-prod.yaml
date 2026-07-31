@@ -13,6 +13,7 @@ spec:
   description: Project prod applications (namespace-scoped, self-managed by projects)
   sourceRepos:
     - 'https://github.com/*'      # tighten to the specific org/repo once the slug is confirmed
+    - 'ghcr.io/scouterna/charts/*' # OCI Helm charts published by Scouterna
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc

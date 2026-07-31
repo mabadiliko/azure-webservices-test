@@ -42,8 +42,9 @@ spec:
           recurse: false
           # Only apply real manifests; skip the *.example reference files.
           # namespace.yaml covers a single-namespace project; namespace-*.yaml
-          # covers dev/prod/staging etc.
-          include: '{namespace.yaml,namespace-*.yaml,developer-rbac.yaml,database.yaml}'
+          # covers dev/prod/staging etc. A file that matches nothing here is
+          # ignored SILENTLY — extend this list when adding a manifest kind.
+          include: '{namespace.yaml,namespace-*.yaml,developer-rbac.yaml,database.yaml,sealedsecret-*.yaml}'
       destination:
         server: https://kubernetes.default.svc
       syncPolicy:

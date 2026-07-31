@@ -1,0 +1,43 @@
+# ScoutID Keycloak — DEV. A published OCI chart plus a values file from this
+# repo, the same multi-source shape the infra apps use.
+#
+# The chart is NOT in this repo: it is built and published from
+# scoutid-keycloak-helm. Only the values live here, so an upgrade is a
+# targetRevision bump.
+#
+# Prerequisites (both already in the cluster, neither created by this app):
+#   - Secret proj-scoutid-db      — from infra/database.yaml (ESO → shared Postgres)
+#   - Secret keycloak-admin       — from sealedsecret-keycloak-admin.yaml
+#
+# project: apps-dev, which permits ghcr.io/scouterna/charts/* as a source.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scoutid-keycloak-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: apps-dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: proj-scoutid-dev
+  sources:
+    - repoURL: ghcr.io/scouterna/charts
+      chart: scoutid-keycloak
+      targetRevision: 0.1.0
+      helm:
+        releaseName: scoutid-keycloak
+        valueFiles:
+          - $values/k8s/projects/proj-scoutid/scoutid-keycloak/values-dev.yaml
+    - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The namespace is created by the project's infra/ manifests, not here.
+      - CreateNamespace=false
+      - ServerSideApply=true
