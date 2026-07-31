@@ -23,7 +23,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: proj-scoutid-dev
   sources:
-    - repoURL: oci://ghcr.io/scouterna/charts
+    - repoURL: ghcr.io/scouterna/charts
       chart: scoutid-keycloak
       targetRevision: 0.1.0
       helm:

@@ -15,11 +15,12 @@ spec:
     # NOTE: globstar (**) is required — a single * does not match across '/', so
     # 'https://github.com/*' would NOT match 'https://github.com/org/repo.git'.
     - 'https://github.com/**'      # tighten to the specific org/repo once the slug is confirmed
-    # For an OCI chart the registry+namespace IS the repoURL (the chart name is a
-    # separate field), so there is nothing after 'charts/' for ** to match — the
-    # bare entry is the one that authorises it.
+    # OCI charts. The registry+namespace IS the repoURL and the chart name is a
+    # separate field, so there is nothing after 'charts/' for ** to match — the
+    # bare entry is the one that authorises it. Both the scheme-less and oci://
+    # spellings are listed because the Application may use either.
+    - 'ghcr.io/scouterna/charts'
     - 'oci://ghcr.io/scouterna/charts'
-    - 'oci://ghcr.io/scouterna/charts/**'
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc
