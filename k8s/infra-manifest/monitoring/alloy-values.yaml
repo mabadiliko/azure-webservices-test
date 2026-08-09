@@ -101,7 +101,9 @@ alloy:
 
         stage.static_labels {
           values = {
-            cluster = "webservices",
+            # Must match the pod-log pipeline above, or events land under a
+            # different `cluster` value and event panels read as empty.
+            cluster = "webservices-v2",
           }
         }
 

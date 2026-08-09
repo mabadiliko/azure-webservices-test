@@ -1,11 +1,5 @@
-# Headlamp — deployed as plain manifests (not the Helm chart) because the chart's
-# OIDC templating cannot take an ESO-supplied client secret without leaking it
-# into git (its args use $(VAR) which K8s won't substitute from envFrom, and its
-# `env` values schema forbids valueFrom). Plain manifests make the OIDC wiring
-# trivial: the client secret is a normal env var with valueFrom -> the ESO secret.
-#
-# OIDC provider is Dex (https://dex.wsv2test.j26.se), which fronts GitHub.
-# Authorization is Kubernetes RBAC on the user's OIDC identity (the GitHub login).
+# Headlamp — plain manifests, not the Helm chart: the chart cannot take an
+# ESO-supplied OIDC client secret without committing it. Verify per §11.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,17 +27,12 @@ spec:
             - "-in-cluster-context-name=main"
             - "-plugins-dir=/headlamp/plugins"
             - "-session-ttl=86400"
-            # OIDC (Dex). Non-secret flags are literals; the client secret comes
-            # from the env var below (valueFrom the ESO-managed secret).
             - "-oidc-client-id=headlamp"
             - "-oidc-idp-issuer-url=https://dex.wsv2test.j26.se"
-            # offline_access makes Dex issue a refresh token so Headlamp can
-            # silently renew the session instead of failing when the id_token
-            # expires (otherwise: "token expired and refresh token is not set").
-            # groups makes Dex include GitHub team memberships so RBAC can grant
-            # by team (infra team -> cluster-admin).
+            # offline_access: refresh token. groups: GitHub teams for RBAC.
             - "-oidc-scopes=openid,profile,email,offline_access,groups"
             - "-oidc-callback-url=https://headlamp.wsv2test.j26.se/oidc-callback"
+            # $(VAR) is expanded by the kubelet from `env` below, not a shell.
             - "-oidc-client-secret=$(OIDC_CLIENT_SECRET)"
           env:
             - name: OIDC_CLIENT_SECRET
@@ -55,15 +44,17 @@ spec:
             - name: http
               containerPort: 4466
               protocol: TCP
+          # /config is a backend route; / is the static frontend and always 200s.
+          # Still not a full health check — see docs/install.md §11.
           livenessProbe:
             httpGet:
-              path: /
+              path: /config
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /
+              path: /config
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10

@@ -1,5 +1,5 @@
-# Wave 1 — creates the MinIO buckets (loki, thanos, velero) that Loki/Thanos/
-# Velero consume. Separate from the minio app because the min.io chart's built-in
+# Wave 1 — creates the MinIO buckets (loki, thanos) that Loki and Thanos
+# consume. Separate from the minio app because the min.io chart's built-in
 # bucket hook (a Helm post-install hook) is unreliable under ArgoCD — see the
 # comment in create-buckets-job.yaml. Same wave as minio: the Job self-waits for
 # MinIO to answer (mc alias retry loop), so it doesn't matter which finishes

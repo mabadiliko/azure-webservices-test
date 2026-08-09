@@ -82,6 +82,56 @@ Thanos, Headlamp.
   (check `az aks get-versions -l <region>`). On a single-node cluster the
   upgrade is briefly disruptive — expect a short control-plane/node blip.
 
+## Backup strategy (Velero)
+
+Two schedules in `k8s/infra-manifest/velero/schedules/schedules.yaml`, writing to
+the `velero` container in the durable backup storage account (outside the
+cluster, so it survives a teardown):
+
+| Schedule | Scope | When | Retention |
+|---|---|---|---|
+| `daily-projects` | project namespaces (`"*"` minus infra), incl. PVC data | 02:00 daily | 14 days |
+| `weekly-full` | every namespace, infra included | 03:00 Sundays | 35 days |
+
+**Why the split.** Project namespaces hold state that exists nowhere else, so
+they are backed up daily. Infra namespaces are reproducible from Git via ArgoCD —
+a rebuild is the real recovery path, not a restore — so the weekly full backup is
+a cheap safety net for API state rather than the primary mechanism.
+
+**The maintenance obligation.** `daily-projects` is a **denylist**: it includes
+`"*"` and subtracts the infra namespaces. The default for any new namespace is
+therefore *to be backed up*, which is right for projects and wrong for infra.
+**Adding an infra service means adding its namespace to `excludedNamespaces`** —
+keep that list in step with the destination namespaces in
+`k8s/argocd/infra-apps/`. Nothing enforces this and nothing alerts on it: a
+missed namespace is silently swept into the daily project backup, where the only
+symptom is slower backups and storage growth.
+
+`postgres` is excluded for a different reason — the shared database has its own
+CNPG `ScheduledBackup` at 02:30 (`k8s/infra-manifest/postgres/cluster.yaml`),
+which is the correct way to back up a live database. Leaving it in would also
+snapshot its 32Gi PVC on a second, overlapping path. It is still covered by
+`weekly-full`.
+
+**Verifying.** Backups fail quietly — a `Schedule` that never produces a backup
+looks the same as one that does until a restore is needed:
+
+```bash
+velero schedule get                 # both schedules, and LAST BACKUP
+velero backup get                   # expect a daily-projects-* from last night
+velero backup describe <name>       # check Phase: Completed and the ns list
+```
+
+Watch for `PartiallyFailed` on `weekly-full` — a few un-snapshottable cluster
+resources are expected there. On `daily-projects` it is not; investigate.
+
+> **Restores are documented in [onboarding.md](onboarding.md)** ("Restore a
+> namespace or PVC") and **have never been exercised on this cluster**. The first
+> real restore should be treated as a test of the procedure as much as a
+> recovery. PVC contents also depend on the `VolumeSnapshotClass` labeled
+> `velero.io/csi-volumesnapshot-class: "true"` — without it, backups silently
+> capture object state but no volume data.
+
 ## Automating drift detection
 
 Consider adding **Renovate** (or Dependabot) to the repo. It watches the pinned
@@ -119,3 +169,82 @@ As of the initial build:
 >   fresh install is clean.
 > - **Traefik v39 → v41**: the chart's top-level `logs:` key became `log:` (level
 >   moved directly under it) and access logs are now a separate `accessLog:` key.
+
+---
+
+## Accepted risks (revisit deliberately)
+
+Things we know are not ideal, why they are that way, and what would close them.
+Listed so a later reader finds a decision rather than an oversight.
+
+Both network entries below share one root cause: **AKS egresses through a
+managed outbound IP that Azure reassigns on every cluster rebuild**
+(`outboundType: 'loadBalancer'` in `infra/aks.bicep`). Pinning that to a static
+Public IP is the single change that makes firewalling either resource
+practical — worth doing first if this is revisited.
+
+### Key Vault is reachable from any network
+
+`infra/keyvault.bicep` sets `networkAcls.defaultAction: Allow`, so the vault
+endpoint answers on the public internet.
+
+**This is the higher-value target of the two.** The vault is the cluster's root
+of trust — it holds the **Sealed Secrets private key** (which decrypts every
+`SealedSecret` committed to the public repo), the backup storage-account key,
+the Dex and Grafana GitHub client secrets, and the MinIO root credentials.
+Compromise here is worse than compromise of the backup account.
+
+**What protects it.** Authorization is Azure **RBAC**, not legacy access
+policies (`enableRbacAuthorization: true`), so reaching the endpoint grants
+nothing without a role assignment. Soft-delete is on with 90-day retention and
+purge protection is enabled, so secrets cannot be permanently destroyed by an
+attacker or a mistake. What the open endpoint exposes is the **authentication
+surface** — credential probing and any future Azure-side auth flaw.
+
+**Why it is open.** The same constraint as the backup account: ESO reads the
+vault from inside the cluster over the AKS **managed outbound IP**, which Azure
+reassigns on every rebuild, and admins run `az keyvault` from arbitrary
+networks. An IP allow-list would break secret sync after each teardown — and
+because ESO failures surface as an `ExternalSecret` that simply stops
+refreshing, that breakage is quiet.
+
+**What would close it,** once the cluster stops churning: a **Private Endpoint**
+plus Private DNS, or `defaultAction: 'Deny'` with the AKS outbound IP pinned to a
+**static Public IP** and the admin IPs listed. Both are more attractive here than
+for the backup account, given what is stored.
+
+**Interim mitigation that costs nothing:** keep the RBAC assignments minimal
+(ESO holds only `Key Vault Secrets User`, i.e. read) and prefer per-secret scopes
+over vault-wide roles for any future consumer. An open endpoint plus a
+least-privilege role is a much smaller problem than an open endpoint plus a
+broad one.
+
+### Backup storage is reachable from any network
+
+`infra/backup-storage.bicep` sets `networkAcls.defaultAction: Allow`, so the
+storage account holding **all cluster backups** answers on the public internet.
+
+**What that does and does not mean.** The data is not public:
+`allowBlobPublicAccess` is false, every container is `publicAccess: None`,
+HTTPS-only, TLS 1.2 minimum, and reading a backup needs a valid credential
+(Velero's Workload Identity, or CloudNativePG's account key). What is exposed is
+the **authentication endpoint** — surface for credential probing, and a larger
+blast radius if the CNPG account key ever leaks.
+
+**Why it is open.** The shared root cause above: the outbound IP changes on
+every rebuild, so an IP allow-list would break Velero and CNPG backups after each
+teardown — and a stalled backup is the failure nobody notices until a restore is
+needed. Admins also run `az storage` against it from arbitrary networks.
+
+**What would close it,** once the cluster stops churning:
+
+- a **Private Endpoint** + Private DNS (~€7/month; admin access then needs a jump
+  host or VPN), or
+- `defaultAction: 'Deny'` with the AKS outbound IP pinned to a **static Public
+  IP** so it survives rebuilds, plus the admin IPs.
+
+**The bigger lever is the key, not the firewall.** `allowSharedKeyAccess: true`
+exists only because the CNPG Barman plugin's Managed-Identity path is finicky
+with multiple node identities; Velero already needs no key. When that path is
+reliable, dropping shared-key access removes the credential this exposure would
+amplify — worth more than the network restriction on its own.

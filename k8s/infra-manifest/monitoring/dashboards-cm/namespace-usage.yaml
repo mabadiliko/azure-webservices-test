@@ -1,4 +1,10 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-namespace-usage
+  namespace: monitoring
+  labels:
+    grafana_dashboard: '1'
 data:
   namespace-usage.json: |
     {
@@ -71,10 +77,3 @@ data:
         }
       ]
     }
-kind: ConfigMap
-metadata:
-  creationTimestamp: null
-  labels:
-    grafana_dashboard: "1"
-  name: dashboard-namespace-usage
-  namespace: monitoring

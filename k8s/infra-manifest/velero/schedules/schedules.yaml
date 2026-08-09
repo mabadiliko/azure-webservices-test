@@ -1,9 +1,4 @@
-# Velero backup schedules. Applied alongside the Velero install (same namespace).
-#
-# Strategy: back up PROJECT namespaces daily (their state + PV data). Infra
-# namespaces are reproducible from Git (ArgoCD) so they don't strictly need
-# backing up — but a weekly full backup is a cheap safety net for the whole
-# cluster's API state.
+# Velero backup schedules. Strategy: docs/maintenance.md ("Backup strategy").
 ---
 # Daily backup of project namespaces (anything NOT infra). 14-day retention.
 apiVersion: velero.io/v1
@@ -18,7 +13,8 @@ spec:
     includedNamespaces:
       - "*"
     excludedNamespaces:
-      # Infra namespaces are reproducible from Git via ArgoCD.
+      # Keep in step with the destinations in k8s/argocd/infra-apps/ — a missing
+      # namespace here is silently swept into the daily project backup.
       - kube-system
       - kube-public
       - kube-node-lease
@@ -31,6 +27,10 @@ spec:
       - external-secrets
       - headlamp
       - velero
+      - dex
+      - sealed-secrets
+      # Has its own CNPG ScheduledBackup at 02:30; still in weekly-full.
+      - postgres
     snapshotVolumes: true
     storageLocation: default
 ---

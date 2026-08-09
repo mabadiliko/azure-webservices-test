@@ -26,8 +26,8 @@ param clusterName string = 'webservices-v2'
 @description('Azure region. Sweden Central.')
 param location string = 'swedencentral'
 
-@description('Kubernetes version.')
-param kubernetesVersion string = '1.36.2'
+@description('Kubernetes MINOR version alias (no patch): autoUpgradeProfile patches the cluster, so a pinned patch version would make a later redeploy (the nodeCount workflow) submit a downgrade and be rejected.')
+param kubernetesVersion string = '1.36'
 
 @description('DNS prefix for the managed cluster API server.')
 param dnsPrefix string = clusterName
@@ -35,8 +35,8 @@ param dnsPrefix string = clusterName
 @description('Availability zones to place the node pool across.')
 param zones string[] = ['1', '2', '3']
 
-@description('VM size for the node pool. D4as_v5 (AMD, 4 vCPU / 16 GB)')
-param vmSize string = 'Standard_D4as_v5'
+@description('VM size for the node pool. D4s_v6 (Intel, 4 vCPU / 16 GB, 12 attachable data disks)')
+param vmSize string = 'Standard_D4s_v6'
 
 @description('Node count. MANUAL scaling — bump this and redeploy to add nodes (no autoscaler).')
 param nodeCount int = 1

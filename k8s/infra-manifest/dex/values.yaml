@@ -7,8 +7,8 @@
 # Access to the Scouterna GitHub org is required (orgs filter below).
 #
 # The GitHub OAuth App's client SECRET is NOT in this file — it is delivered by
-# ESO from Key Vault into secret `dex-github-oauth` (key `client-secret`) and
-# referenced via the envFrom/env below. The client ID is public, set here.
+# ESO from Key Vault into secret `dex-oauth` (key `github-client-secret`) and
+# referenced via the envVars below. The client ID is public, set here.
 
 replicaCount: 1
 
@@ -41,7 +41,7 @@ config:
       id: github
       name: GitHub
       config:
-        clientID: Ov23liHXash7SXVW4poO         # Dex's own GitHub OAuth App (client id is public)
+        clientID: <DEX_GITHUB_CLIENT_ID>          # Dex's own GitHub OAuth App (client id is public)
         clientSecret: $GITHUB_CLIENT_SECRET         # expanded from env (ESO secret)
         redirectURI: https://dex.wsv2test.j26.se/callback
         orgs:

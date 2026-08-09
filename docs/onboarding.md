@@ -29,36 +29,57 @@ ArgoCD `Application` that syncs that project's `infra/` folder under the
 `project-infra` AppProject. So **committing a project's `infra/` files is what
 deploys them** — there is no `kubectl apply` step.
 
-It syncs only real manifests: `namespace.yaml` / `namespace-*.yaml`,
-`developer-rbac.yaml`, and `database.yaml`. The `*.example` files shipped by the
+It syncs only the files matching the `include` list in `projectset.yaml` —
+today `namespace.yaml` / `namespace-*.yaml`, `developer-rbac.yaml`,
+`database.yaml`, and `sealedsecret-*.yaml` (that list is the source of truth;
+anything else is ignored silently). The `*.example` files shipped by the
 template are ignored until you copy them to their real name. `_template/` itself
 is excluded.
 
 ## A. Create the project and its namespace(s)
 
-1. **Copy the template and name it.** Set the project name once, then run the
-   block **from the repo root**. It copies `k8s/projects/_template/` to
+1. **Copy the template and name it.** Set the project name once; everything below
+   uses `$PROJECT`. This copies `k8s/projects/_template/` to
    `k8s/projects/$PROJECT/` and replaces the `PROJECT` placeholder everywhere it
-   appears — including `chart/` and the `.example` files, so they are ready when
-   you activate them later.
+   appears — including the `.example` files, so they are ready when you activate
+   them later.
+
+   > **Naming rule — stricter than a Kubernetes namespace.** Lowercase letters,
+   > digits and **single** hyphens, starting and ending alphanumeric, ≤58 chars.
+   > **No consecutive hyphens:** `foo--bar` is a legal namespace but Azure
+   > rejects it as a blob container name, so a project named that way onboards
+   > fine and then fails later at `scripts/onboard-cnpg-backup.sh`. The name also
+   > becomes database roles and backup container names — renaming afterwards
+   > means recreating them.
 
    ```bash
    export PROJECT=<project name>           # the only thing to set
-
-   set -euo pipefail
-   [ -d k8s/projects/_template ] || { echo "run this from the repo root"; exit 1; }
-   [ -e "k8s/projects/$PROJECT" ] && { echo "k8s/projects/$PROJECT already exists"; exit 1; }
+   cd "$(git rev-parse --show-toplevel)"   # works from any subdirectory
 
    cp -r k8s/projects/_template "k8s/projects/$PROJECT"
    rm -f "k8s/projects/$PROJECT/.gitkeep"
    grep -rlZ PROJECT "k8s/projects/$PROJECT/" | xargs -0 sed -i "s/PROJECT/$PROJECT/g"
-
-   find "k8s/projects/$PROJECT" -type f | sort
-   grep -rn PROJECT "k8s/projects/$PROJECT/" || echo "no PROJECT placeholders left — good"
    ```
 
-   The last line must print `no PROJECT placeholders left`. Keep `$PROJECT` set —
-   the rest of this section uses it.
+   **Check it before moving on** — the file list should be 6 files, all under
+   `k8s/projects/$PROJECT/`, and no `PROJECT` may remain:
+
+   ```bash
+   find "k8s/projects/$PROJECT" -type f | sort
+   grep -rn PROJECT "k8s/projects/$PROJECT/" || echo "no PROJECT placeholders left — good"
+   git status --short
+   ```
+
+   > If it went wrong — pasted into the wrong repo, or `$PROJECT` already existed
+   > so `cp` nested a `_template/` copy inside it — nothing is committed yet.
+   > Remove it and start over:
+   > ```bash
+   > rm -rf "k8s/projects/$PROJECT"
+   > git rm -r --cached --ignore-unmatch -q "k8s/projects/$PROJECT"   # if already staged
+   > git status --short                                               # must be clean
+   > ```
+   > The nested case is the quiet one: the placeholder check still passes (the
+   > `sed` rewrote the nested copy too), so the **file list** is what catches it.
 
    (`GITHUB_LOGIN` in `developer-rbac.yaml.example` is a **separate** placeholder
    and is deliberately left alone — it's filled per developer in
@@ -73,15 +94,23 @@ is excluded.
    - **one namespace only:** collapse to a single `namespace.yaml` named just
      `$PROJECT` (no `-dev` suffix, no `env` label):
      ```bash
-     cd "k8s/projects/$PROJECT/infra"
-     rm namespace-prod.yaml
-     mv namespace-dev.yaml namespace.yaml
+     cd "$(git rev-parse --show-toplevel)/k8s/projects/$PROJECT"
+
+     rm infra/namespace-prod.yaml
+     mv infra/namespace-dev.yaml infra/namespace.yaml
      sed -i -e "s/^  name: $PROJECT-dev\$/  name: $PROJECT/" \
-            -e '/scouterna\.se\/env:/d' namespace.yaml
-     cat namespace.yaml && cd -
+            -e '/scouterna\.se\/env:/d' infra/namespace.yaml
+
+     cat infra/namespace.yaml
+     cd "$(git rev-parse --show-toplevel)"
      ```
-   - **add staging:** `sed 's/dev/staging/g' namespace-dev.yaml > namespace-staging.yaml`
-     (from the project's `infra/` dir), then check the result.
+     If the project later registers its own GitOps repo, trim `gitops.yaml`'s
+     `environments` list to match — an entry naming a namespace that does not
+     exist produces an Application that can never sync.
+   - **add staging:** copy the namespace file and edit the copy:
+     ```bash
+     sed "s/dev/staging/g" infra/namespace-dev.yaml > infra/namespace-staging.yaml
+     ```
 
    > Filenames must be `namespace.yaml` or `namespace-<something>.yaml` — that is
    > what the ApplicationSet's include glob matches.
@@ -119,9 +148,17 @@ the `Webservices Infra` GitHub team grants cluster-admin cluster-wide — they d
 
 ### Grant access
 
-Copy `infra/developer-rbac.yaml.example` to `infra/developer-rbac.yaml`, keep the
-block(s) you need, and fill in the names. The example ships **both** subject
-kinds; choose per your case (and mix freely — one file can hold both):
+In the project's directory, copy `developer-rbac.yaml.example` to
+`developer-rbac.yaml` — dropping the `.example` suffix is what makes the
+ApplicationSet sync it:
+
+```bash
+cd "$(git rev-parse --show-toplevel)/k8s/projects/$PROJECT"
+cp infra/developer-rbac.yaml.example infra/developer-rbac.yaml
+```
+
+Then keep the block(s) you need and fill in the names. The example ships **both**
+subject kinds; choose per your case (and mix freely — one file can hold both):
 
 - **A GitHub team** (`kind: Group`, `"aks:jwt:<org>:<Team Display Name>"`) —
   **recommended for real teams.** Infra commits the binding **once**; thereafter
@@ -247,20 +284,91 @@ For Grafana, the only real test is a fresh sign-out and sign-in: the role is
 computed at login, so an existing session keeps its old role, and a running
 Grafana keeps its old config until the pod restarts.
 
-## C. The project's own workload (optional ArgoCD registration)
+## C. The project's own workload — by hand, or from your own GitOps repo
 
-Layer 2 is the project's choice — it can just `helm install` / `kubectl apply`
-as their GitHub identity and never touch ArgoCD. If it wants GitOps:
+Layer 2 belongs to the project. There are exactly **two routes**, and neither
+puts your workload manifests in the infra repo.
 
-1. Fill in `k8s/projects/<project>/chart/` plus `values-dev.yaml` and
-   `values-prod.yaml` — one values file per environment, each stating that
-   environment **completely** (additive — no Kustomize overlays, so no dev value
-   leaks into prod). A project with staging adds `values-staging.yaml`.
-2. Add an ArgoCD `Application` (project `apps-dev` or `apps-prod`) pointing at
-   the chart with the right values file. Those AppProjects are tightly scoped:
-   they restrict apps to this repo and to creating only their own Namespace —
-   they deliberately **cannot** create the Layer-1 resources (namespaces, RBAC,
-   databases). That privilege stays with `project-infra`.
+### C1. By hand (the default)
+
+`helm install` / `kubectl apply` with your own credentials, in your own
+namespaces. You own them, so no infra request is needed and nothing has to be
+committed anywhere. Iterate freely.
+
+For most **dev** environments this is the end state, and that is fine.
+
+### C2. Your own GitOps repo
+
+Keep a GitOps repo **you** control. Infra wires it into ArgoCD **once**; after
+that you commit to your own repo and ArgoCD syncs it — no infra involvement in
+day-to-day changes, and no handing files over.
+
+Ask infra for a registration, giving them:
+
+1. **the repo URL** (and branch) — public needs nothing further; a **private**
+   repo also needs an ArgoCD repository credential, and the credential's URL
+   **scheme must match** the repo URL (an `https://` repo needs an HTTPS/token
+   credential, not an SSH deploy key);
+2. **one path per environment** inside that repo, e.g. `k8s/dev` and `k8s/prod`;
+3. whether each environment should be **automated** (ArgoCD applies and
+   self-heals — the cluster always matches Git) or **manual** (ArgoCD reports
+   drift but changes nothing until a deliberate sync). Prod is normally
+   automated; dev is often manual so you can keep hand-editing.
+
+Infra commits two small files and you are live. You never touch the infra repo.
+
+**Moving from C1 to C2 is a no-op if the repo matches what is running.** Same
+release name, same namespace, same values → ArgoCD **adopts** the running
+release: `Synced` without restarting anything. Verify nothing was recreated,
+rather than trusting the word "Synced":
+
+```bash
+kubectl get app -n argocd <app>                       # Synced / Healthy
+kubectl get rs -n <namespace>                         # no new ReplicaSet
+kubectl get pods -n <namespace>                       # AGE unchanged, RESTARTS 0
+```
+
+If pods restart, the committed manifests differ from what was running — diff
+them (`helm get values <release> -n <namespace>`) before committing, not after.
+
+> **On a manual environment, a sync DISCARDS hand edits** — it reapplies Git
+> wholesale. Capture anything you want to keep first. See
+> [argocd.md](argocd.md).
+
+### What your repo may deploy
+
+Your AppProject names **only your repo** and **only your namespaces**, so you
+cannot deploy from another project's repo or into another project's namespace.
+Within your namespaces you may create workload kinds: `Deployment`,
+`StatefulSet`, `DaemonSet`, `Job`, `CronJob`, `Service`, `Ingress`,
+`NetworkPolicy`, `ConfigMap`, `PersistentVolumeClaim`,
+`HorizontalPodAutoscaler`, `PodDisruptionBudget`, `ServiceMonitor`, and Traefik
+`IngressRoute`/`Middleware`.
+
+> **`IngressRoute` cannot cross namespaces.** Traefik runs with
+> `allowCrossNamespace: false`, so a route may only reference Services and
+> Middlewares in its own namespace — you cannot route to (or be routed to by)
+> another project. A cross-namespace `namespace:` field in a route is rejected
+> by Traefik, not by ArgoCD, so it shows as a route that never takes effect
+> rather than a sync error. If you genuinely need this, talk to infra rather
+> than working around it.
+
+**Deliberately excluded**, because a commit in your repo is not reviewed by
+infra:
+
+| Kind | Why |
+|---|---|
+| `RoleBinding`, `Role` | would let a commit grant itself `admin`/`cluster-admin` |
+| `ServiceAccount` | mints an identity, and a token with it |
+| `Secret`, `SealedSecret` | credentials stay infra-granted; also keeps plaintext out of your Git |
+| `ExternalSecret` | would read any Key Vault secret ESO's identity can reach |
+| ArgoCD `Application` | one with `project: infra` is a complete escape to cluster-admin |
+| CNPG `Cluster`/`Database` | databases are Layer 1, on the shared server |
+
+Anything on that list is an infra request, delivered through
+`k8s/projects/<project>/infra/` in the infra repo — which only infra can commit.
+That is the same boundary as before; it is now enforced by the AppProject rather
+than by infra reviewing every change.
 
 ## Secrets
 
@@ -306,7 +414,7 @@ an interval.
      name: smtp
      namespace: proj-scoutid
    spec:
-     refreshInterval: 1h
+     refreshInterval: 24h
      secretStoreRef:
        name: azure-kv           # the shared store — do not create your own
        kind: ClusterSecretStore
@@ -342,14 +450,24 @@ commit even to the public repo; fully self-service per secret.
 # Fetch the controller's PUBLIC key (safe to cache / share):
 kubeseal --controller-namespace sealed-secrets --fetch-cert > pub-cert.pem
 
-# Author a normal Secret WITHOUT applying it, then seal it:
+# Author a normal Secret WITHOUT applying it, then seal it. The output MUST be
+# named sealedsecret-*.yaml and land in the project's infra/ directory:
 kubectl create secret generic app-api-keys -n proj-scoutid \
   --from-literal=stripe=sk_live_xxx --dry-run=client -o yaml \
-  | kubeseal --cert pub-cert.pem --format yaml > sealedsecret.yaml
+  | kubeseal --cert pub-cert.pem --format yaml \
+  > k8s/projects/proj-scoutid/infra/sealedsecret-app-api-keys.yaml
 
-# Commit sealedsecret.yaml. ArgoCD applies it; the controller decrypts it into
-# the real Secret `app-api-keys` in namespace proj-scoutid.
+# Commit it. ArgoCD applies it; the controller decrypts it into the real Secret
+# `app-api-keys` in namespace proj-scoutid.
 ```
+
+> **The filename and location are load-bearing.** The `project-infra`
+> ApplicationSet syncs only `k8s/projects/<project>/infra/` and only files
+> matching its `include` list — which covers `sealedsecret-*.yaml`. A sealed
+> secret committed anywhere else, or named anything else, is **ignored silently**:
+> no error in ArgoCD, no event, just a Secret that never appears. Verify with
+> `kubectl get sealedsecret -n <namespace>` (expect `SYNCED: True`) rather than
+> assuming the commit was enough.
 
 The plaintext never touches Git — only the sealed form, which is bound to *this*
 cluster's key and *this* namespace/name (it cannot be moved or decrypted
@@ -388,44 +506,63 @@ Best practices so this stays sane and safe:
 - **Scope RBAC.** Secrets are namespaced; a developer with `view` (not `admin`) on
   the namespace cannot read `Secret` contents. Grant `admin` deliberately.
 
-## Add a database with backups (PostgreSQL / CloudNativePG)
+## Add a database (PostgreSQL)
 
-A database is a **Layer-1 (infra-owned) resource** — it wires into the shared
-CNPG operator, the durable backup storage account, and the shared Key Vault, so
-the infra team stands it up even for a project that otherwise self-manages. It
-lives in the project's `infra/` directory so it deploys into the project's own
-namespace, under the project's scope, via the same ApplicationSet.
+Projects get a **database on the shared Postgres server**, not their own Postgres
+instance — most projects here are small, and a dedicated instance per project
+reserves far more than it uses. See [postgres.md](postgres.md) for the design and
+for when a project should get its own instance instead.
 
-Backups go to a **per-project container** in the durable backup storage account
-(external to the cluster), via the **Barman Cloud Plugin** (the supported
-method; the classic `spec.backup.barmanObjectStore` is deprecated).
+Two commits are involved, because CNPG resolves `spec.cluster` by name within a
+namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
+(infra-owned), while the connection Secret goes in the project's namespace.
 
-1. **Create the project's backup container** (isolates its backups):
+1. **Infra: create the databases.** Generate a password per environment into Key
+   Vault, then copy the template and commit:
    ```bash
-   scripts/onboard-cnpg-backup.sh <project>     # creates container cnpg-<project>
-   ```
-2. **Activate the database manifests.** Copy
-   `k8s/projects/<project>/infra/database.yaml.example` to
-   `infra/database.yaml` (the `PROJECT` placeholders were already replaced in
-   step A1). Commit — ArgoCD applies it. It contains:
-   - an `ExternalSecret` that materializes the storage key from Key Vault
-     (secret `backup-storage-account-key`) into `backup-storage-key`,
-   - an `ObjectStore` (destination = the project's container),
-   - a `Cluster` that references the plugin in `spec.plugins`,
-   - a daily `ScheduledBackup` (`method: plugin`),
-   - a `PodMonitor` so the shared Prometheus scrapes this database's PostgreSQL
-     metrics (connections, transactions, replication lag, WAL, cache hit ratio,
-     backup status). Its `release: kps` label is what makes Prometheus pick it
-     up, and the `cnpg.io/cluster` selector must match the `Cluster` name — if
-     you renamed `PROJECT-db`, rename it in both places.
-3. **Verify**: the `Cluster` reaches `Cluster in healthy state` and its
-   `ContinuousArchiving` condition is `True`; a `Backup` completes and blobs
-   appear under `cnpg-<project>/base/…` and `…/wals/…` in the storage account.
+   for env in dev prod; do
+     az keyvault secret set --vault-name kv-scouterna-webservices \
+       --name "postgres-$PROJECT-$env-password" \
+       --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)" >/dev/null
+   done
 
-> The Barman Cloud Plugin must be installed (infra app `barman-cloud-plugin`).
-> Auth is currently a storage-account key via ESO; Workload Identity for CNPG
-> is a future improvement. Remember `backups.velero.io` naming does **not** apply
-> here — CNPG uses `backups.postgresql.cnpg.io`.
+   cd "$(git rev-parse --show-toplevel)/k8s/infra-manifest/postgres/databases"
+   sed "s/PROJECT/$PROJECT/g" _template.yaml.example > "$PROJECT.yaml"
+   ```
+   That file holds, **for dev and for prod**, an `ExternalSecret` (the role
+   password, from Key Vault), a `DatabaseRole`, and a `Database` owned by it.
+   Each environment gets its own role, so a leaked dev credential cannot reach
+   prod data. Commit — the `postgres-databases` app applies it.
+
+2. **Project: materialize the credentials.** In the project's own directory:
+   ```bash
+   cd "$(git rev-parse --show-toplevel)/k8s/projects/$PROJECT/infra"
+   git mv database.yaml.example database.yaml
+   ```
+   It produces a Secret named `$PROJECT-db` **in each namespace** — with `host`,
+   `port`, `dbname`, `username`, `password` and a ready-made `uri`, each pointing
+   at that environment's own database.
+
+   > **dev + prod is the default**, matching the namespaces in §A2. For a single
+   > environment, delete the prod block from **both** files and drop the `-dev`
+   > suffix in what remains; for staging, copy a block in each and change the
+   > suffix. Remember the matching Key Vault password either way.
+
+3. **Verify** — the database and role exist, and the project's Secret is synced:
+   ```bash
+   kubectl get database,databaserole -n postgres | grep "$PROJECT"   # -dev and -prod
+   for env in dev prod; do
+     kubectl get externalsecret -n "$PROJECT-$env"                   # READY=True
+   done
+   kubectl get secret -n "$PROJECT-prod" "$PROJECT-db" \
+     -o jsonpath='{.data.dbname}' | base64 -d; echo                  # PROJECT-prod
+   ```
+   The shared server's own health and backups are infra's concern, not the
+   project's: `kubectl get cluster -n postgres shared`.
+
+> Deleting a project's file does **not** drop its data — `prune` is disabled on
+> the `postgres-databases` app and `databaseReclaimPolicy: retain` is set.
+> Retiring a database is deliberate; see [postgres.md](postgres.md).
 
 ## Namespace & PVC backups (Velero)
 

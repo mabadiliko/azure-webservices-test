@@ -42,6 +42,10 @@ metrics:
   serviceMonitor:
     enabled: true
     namespace: sealed-secrets
+    # REQUIRED: Prometheus only selects release=kps; without it, no metrics and
+    # no error.
+    labels:
+      release: kps
 
 # The chart installs the SealedSecret CRD.
 # (crds are installed by default; kept explicit for clarity.)

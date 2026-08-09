@@ -90,32 +90,38 @@ use and a low total-regional cap. Check and raise before deploying.
 
 ```bash
 SCOPE="subscriptions/$SUBSCRIPTION_ID/providers/Microsoft.Compute/locations/$LOCATION"
-az quota show --resource-name standardDASv5Family --scope "$SCOPE" --query '{name:name.value, limit:properties.limit.value}' -o table
-az quota show --resource-name cores              --scope "$SCOPE" --query '{name:name.value, limit:properties.limit.value}' -o table
+az quota show --resource-name standardDSv6Family --scope "$SCOPE" --query '{name:name.value, limit:properties.limit.value}' -o table
+az quota show --resource-name cores             --scope "$SCOPE" --query '{name:name.value, limit:properties.limit.value}' -o table
 ```
 
 The bare `-o table` prints only the `Name` column — the limit lives in a nested
-field it drops; the `--query` above pulls out the number. One `Standard_D4as_v5`
+field it drops; the `--query` above pulls out the number. One `Standard_D4s_v6`
 node needs **4 vCPU**; if both limits are already ≥ 4 (with regional headroom) you
 can skip ahead. A limit of **0** (common on a fresh subscription) blocks the
 deploy — raise it (values are examples; leave headroom for a 2nd node + surge):
 
 ```bash
-az quota update --resource-name standardDASv5Family --scope "$SCOPE" --limit-object value=16 --resource-type dedicated
-az quota update --resource-name cores               --scope "$SCOPE" --limit-object value=32 --resource-type dedicated
+az quota update --resource-name standardDSv6Family --scope "$SCOPE" --limit-object value=16 --resource-type dedicated
+az quota update --resource-name cores              --scope "$SCOPE" --limit-object value=32 --resource-type dedicated
 ```
 
 **Gotchas:**
-- The cluster uses **`Standard_D4as_v5`** (AMD, `standardDASv5Family`). The Intel
-  `Standard_D4s_v5` (`standardDSv5Family`) was tried first but the direct quota
-  API **refuses** that family here (`QuotaNotAvailableForResource`) — AMD is the
-  grantable one. D4as_v5 is equivalent (4 vCPU / 16 GB).
+- The cluster uses **`Standard_D4s_v6`** (Intel, `standardDSv6Family`) — chosen
+  over the equally-sized AMD `Standard_D4as_v5` because v6 allows **12 attachable
+  data disks instead of 8**, and disk count (not CPU or memory) is what this
+  cluster runs out of first. See [postgres.md](postgres.md) and the disk note below.
+- The older Intel `standardDSv5Family` is **not grantable** on this subscription
+  (`QuotaNotAvailableForResource` from the direct quota API). That restriction is
+  specific to the v5 family — **`standardDSv6Family` is grantable**, so v6 gets us
+  Intel and more disk slots at the same size and price class.
 - `az quota update` needs the `quota` CLI extension (`az extension add --name quota`).
 - On some subscriptions (notably **Sponsorship**) `az quota update` is rejected —
   raise it from the portal instead: *Subscription → Usage + quotas → find the
   family → Request increase*.
-- Ephemeral OS disk is **not supported** on D4as_v5 — we use a managed OS disk
-  (already set in `infra/aks.bicep`).
+- Ephemeral OS disk is **not supported** on `D4s_v6` (it has no local temp disk) —
+  we use a managed OS disk (already set in `infra/aks.bicep`). The `D4ds_v6`
+  variant does have local NVMe if that ever becomes desirable; `emptyDir` does
+  **not** need it, and falls back to the OS disk's ephemeral storage.
 
 ## 2. GitHub OAuth apps (Grafana login + Dex SSO)
 
@@ -240,6 +246,31 @@ az role assignment create --assignee-object-id "$VELERO_PRINCIPAL" --assignee-pr
 > **and** `Reader`. With only the data-plane role the BackupStorageLocation
 > validates as Available but backups stall on a silent 403.
 
+The `velero` and `cnpg-shared` containers are both created by the Bicep
+deployment above — the shared Postgres server's container must exist **before**
+it starts archiving (unlike Velero, CNPG's `ObjectStore` does not create one;
+without it the `Cluster` comes up but `ContinuousArchiving` never goes `True`).
+
+The shared PostgreSQL server additionally needs the **storage-account key** in
+Key Vault. Velero uses Workload Identity,
+but the CNPG Barman plugin still needs a key (its Managed-Identity path is
+finicky with multiple node identities), and ESO reads it from the vault:
+
+```bash
+az keyvault secret set --vault-name $KEY_VAULT_NAME --name backup-storage-account-key \
+  --value "$(az storage account keys list -g $INFRA_RG -n $BACKUP_STORAGE_ACCOUNT \
+              --query '[0].value' -o tsv)" >/dev/null
+```
+
+> Without this secret the failure is quiet: the `Cluster` starts and serves
+> queries, `postgres-backup-storage` sits `SecretSyncedError`, and
+> `ContinuousArchiving` never goes `True` — a working database that is not being
+> backed up. Check both after the cluster is up:
+> ```bash
+> kubectl get externalsecret -n postgres
+> kubectl get cluster -n postgres shared -o jsonpath='{.status.conditions}'
+> ```
+
 ## 6. Write the bootstrap secrets to Key Vault
 
 **Key Vault is the source of truth.** ESO's `ExternalSecret`s (in
@@ -352,16 +383,15 @@ az deployment group create  -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webs
 create it, and `az group delete -g $CLUSTER_RG` removes both.
 
 A good `what-if` ends with `Resource changes: 1 to create.` and a
-`+ Microsoft.ContainerService/managedClusters/<cluster>` block. Bicep also lints
-`no-unused-params` for `deployAcrPull`/`deployKeyVault` — harmless, they're
-declared for later. Deploy takes ~5–10 min.
+`+ Microsoft.ContainerService/managedClusters/<cluster>` block. Deploy takes
+~5–10 min.
 
 ## 7b. Get credentials + verify
 
 ```bash
 az aks get-credentials -g $CLUSTER_RG -n $CLUSTER --admin --file ./.kube-webservices   # gitignored (.kube-*)
 export KUBECONFIG=$PWD/.kube-webservices
-kubectl get nodes -o wide                        # Ready, Standard_D4as_v5, AzureLinux
+kubectl get nodes -o wide                        # Ready, Standard_D4s_v6, AzureLinux
 kubectl -n kube-system get pods | grep cilium    # cilium + cilium-operator Running (eBPF dataplane)
 ```
 
@@ -607,15 +637,22 @@ Every placeholder is named for exactly one variable, so the rule is always
 > OAuth apps** — mixing them up breaks that login. That is why neither is called
 > just `GITHUB_CLIENT_ID`.
 
+> **Deploying under a different `$CLUSTER` name?** `alloy-values.yaml` hardcodes
+> the Loki `cluster` label as `webservices-v2` in **two** places (pod logs and
+> Kubernetes events). It is a plain Helm values file with no templating, so it
+> cannot pick the name up automatically. Change both or neither — a mismatch
+> silently splits logs and events across two `cluster` values, and event panels
+> read as empty rather than erroring.
+
 > **Velero's two `resourceGroup` values are different on purpose** (row 4): the
 > backup storage location takes `$BACKUP_STORAGE_ACCOUNT`'s resource group
 > (`$INFRA_RG`), while the volume snapshot location takes `$NODE_RESOURCE_GROUP`
 > — that is where the cluster's disks live. Swapping them breaks backups.
 
-Check nothing was missed before committing — this should print nothing:
+Check nothing was missed before committing:
 
 ```bash
-grep -rn "<[A-Z_]\+>" k8s/ --include=*.yaml | grep -v "^\S*:[0-9]*: *#"
+scripts/check-placeholders.sh --expect-filled
 ```
 
 **Then commit and push.** ArgoCD syncs from the Git repo, not your working tree —
@@ -648,6 +685,25 @@ git push
 
 ## 10. Install ArgoCD and apply the root app
 
+**Last chance to catch an unfilled placeholder.** From here on ArgoCD syncs
+whatever is in Git, and a `<PLACEHOLDER>` reaches Helm as a literal string —
+Velero authenticates as a client-id called `<VELERO_CLIENT_ID>` and fails at
+**runtime, not at sync**, so the app still reports `Synced`/`Healthy`.
+
+Check **the pushed commit**, not your working tree — that is what ArgoCD reads:
+
+```bash
+git fetch origin
+scripts/check-placeholders.sh --expect-filled origin/$(git branch --show-current)
+```
+
+Anything listed sends you back to §9: fill it, commit, push, re-run.
+
+> This is the reverse of the check CI runs. Upstream `main` is the **template**,
+> where the placeholders are supposed to still be there (CI runs
+> `--expect-template` and fails if a real value is committed over one). Your
+> install branch is the filled-in copy. Both checks use the same script.
+
 ```bash
 kubectl create namespace argocd
 # --server-side is REQUIRED: the applicationsets CRD exceeds the client-side
@@ -662,8 +718,34 @@ kubectl -n argocd rollout status deploy/argocd-server
 kubectl -n argocd rollout status deploy/argocd-repo-server
 kubectl -n argocd rollout status statefulset/argocd-application-controller
 
-kubectl apply -f k8s/argocd/projects/            # infra + apps-dev + apps-prod
-kubectl apply -f k8s/argocd/infra-root-app.yaml  # app-of-apps; recurses infra-apps/ by sync-wave
+kubectl apply -f k8s/argocd/projects/              # infra + project-infra (+ per-project)
+kubectl apply -f k8s/argocd/infra-root-app.yaml    # app-of-apps; recurses infra-apps/ by sync-wave
+kubectl apply -f k8s/argocd/projects-root/         # ApplicationSet: generates one App per project
+```
+
+**These three applies are the only hand-applied surface, and they happen once —
+here, during installation.** `kubectl` is fine while installing; it is not a
+normal-operations tool. Everything after this — a new common service, a new
+project, a handed-over workload, even an edit to an AppProject — reaches the
+cluster by pushing to Git.
+
+The AppProjects are applied by hand here only because of a bootstrap ordering
+problem: `infra-root` cannot sync an Application whose `project:` does not exist
+yet. Immediately afterwards the wave `-1` app `argocd-projects` **adopts** the
+objects in `k8s/argocd/projects/` and owns them from then on, so later edits are
+a commit. Confirm the adoption took:
+
+```bash
+kubectl get app -n argocd argocd-projects   # expect: Synced / Healthy
+```
+
+The ApplicationSet is what makes project onboarding work — it watches
+`k8s/projects/*/infra/` and generates an Application per project. Without it a
+project can be committed correctly and **nothing happens**, with no error
+anywhere. Confirm it exists:
+
+```bash
+kubectl get applicationset -n argocd     # expect: project-infra
 ```
 
 After you apply the root app it takes a minute or two for ArgoCD to discover the
@@ -674,10 +756,11 @@ The root app brings up every common service in dependency order:
 
 | Wave | Services |
 |---|---|
+| -1 | argocd-projects (adopts the AppProjects applied above, so later edits are a commit) |
 | 0 | cluster-infra (StorageClasses + ClusterIssuers), cert-manager, external-secrets (ESO operator), gateway-api-crds |
 | 1 | traefik, minio, minio-buckets, cloudnative-pg, external-secrets-config (ClusterSecretStore + ExternalSecrets), barman-cloud-plugin, sealed-secrets-key (durable sealing key ExternalSecret) |
-| 2 | monitoring (kube-prometheus-stack + Loki + Alloy), dex, sealed-secrets (controller — after its key) |
-| 3 | thanos, headlamp |
+| 2 | monitoring (kube-prometheus-stack + Loki + Alloy), dex, sealed-secrets (controller — after its key), postgres (the shared PostgreSQL server) |
+| 3 | thanos, headlamp, postgres-databases (per-project databases on the shared server) |
 | 4 | governance (alerts + dashboard), velero |
 
 ## 11. Verify + DNS
@@ -786,6 +869,36 @@ separate, GitHub-side question:
 > org your testers actually belong to. Same applies to Grafana's
 > `role_attribute_path` team slugs (§2a).
 
+### Headlamp: log in and actually list something
+
+**The `200` above proves nothing about Headlamp working.** That curl hits `/`,
+the static frontend, which serves fine no matter what the backend can do. The
+probes are slightly stricter — they hit `/config`, a backend route — but that
+still answers 200 when the Kubernetes API is unreachable, because Headlamp
+returns an empty cluster list rather than an error (and v0.41.0 exposes no
+`/healthz`). Headlamp's ServiceAccount is deliberately **not** `cluster-admin`
+(see `k8s/infra-manifest/headlamp/service-rbac.yaml`), so if that role is missing
+something the pod stays **Running/Ready**, ArgoCD stays **Synced/Healthy**, and
+the only symptom is a UI that shows nothing. Nothing alerts.
+
+So verify by using it, once, by hand:
+
+1. Open `https://headlamp.$HOST` and sign in with GitHub via Dex.
+2. **List resources** — open a namespace and view its Pods, then open one Pod.
+3. Confirm you see the namespaces your team's RBAC grants, and no others.
+
+If the UI is blank or errors, check the backend rather than the frontend:
+
+```bash
+kubectl logs -n headlamp deploy/headlamp --tail=50 | grep -i -E 'forbidden|error'
+kubectl auth can-i --list --as=system:serviceaccount:headlamp:headlamp | head
+```
+
+`forbidden` in the logs names the missing verb/resource — add exactly that rule
+to the `headlamp-discovery` ClusterRole and commit. Do **not** reach for
+`cluster-admin`: that is what this design removed, and it would put a full
+cluster-admin token in an internet-facing pod.
+
 There is deliberately **no ArgoCD endpoint** — see the next section.
 
 ## 12. Retire the admin kubeconfig
@@ -831,16 +944,34 @@ ArgoCD is operated **declaratively**: all config is in Git, changes happen by
 commit → auto-sync. There is deliberately **no ArgoCD ingress and no GUI login** —
 smaller attack surface, matches the "everything in Git" model.
 
-- **Observe** with `kubectl -n argocd get applications` (via the OIDC kubeconfig —
-  infra-team members have cluster-admin through §8c).
+- **Observe, refresh and sync** with `kubectl` against the `Application` CRs — no
+  ArgoCD login, no port-forward, and the action is attributable to you rather
+  than to the shared `admin`. See **[argocd.md](argocd.md)** for the full
+  lathund; the short version:
+  ```bash
+  kubectl get app -n argocd                                    # state of everything
+  kubectl annotate app -n argocd <app> \
+    argocd.argoproj.io/refresh=hard --overwrite                # re-read Git now
+  kubectl patch app -n argocd <app> --type merge \
+    -p '{"operation":{"initiatedBy":{"username":"'"$USER"'"},"sync":{}}}'   # sync
+  ```
 - **Debug** a stuck sync via a temporary
   `kubectl -n argocd port-forward svc/argocd-server 8080:443`, logging in with the
   break-glass admin (`kubectl -n argocd get secret argocd-initial-admin-secret
-  -o jsonpath='{.data.password}' | base64 -d`). Not for daily use.
+  -o jsonpath='{.data.password}' | base64 -d`). Not for daily use — the kubectl
+  path above needs no shared credential.
 
 If a shared dashboard is ever wanted, expose `argocd-server` via Traefik + GitHub
 OAuth via ArgoCD's bundled Dex (Scouterna org, teams → RBAC). Not done here by
-choice.
+choice. Note that until it is, `argocd-rbac-cm` is empty and the break-glass
+`admin` is unrestricted — one more reason it is not for daily use.
+
+> **A sync overwrites hand edits.** An app left on manual sync (no `automated:`)
+> lets a project change the release in the cluster and keeps that drift — but the
+> next sync reapplies Git wholesale and discards it. Capture the live state with
+> `helm get values <release> -n <namespace>` and fold it into the values file
+> *before* syncing. This is the handover step in
+> [onboarding.md](onboarding.md) §C.
 
 **Other infra UIs:** Headlamp uses **GitHub SSO via Dex** (§2b) — a developer logs
 in as their GitHub identity and sees only the namespaces their RBAC allows; the
@@ -855,8 +986,12 @@ OAuth** app (§2a).
 
 - **Unfilled placeholder = stalled bring-up.** If apps don't reach
   `Synced`/`Healthy`, first check every §9 placeholder was filled, in the right
-  file, with the right value — all four files. It's easy to fill the client-ids
-  and miss the `vaultUrl` in `clustersecretstore.yaml`.
+  file, with the right value — all five files. It's easy to fill the client-ids
+  and miss the `vaultUrl` in `clustersecretstore.yaml`:
+  ```bash
+  scripts/check-placeholders.sh --expect-filled            # your working tree
+  scripts/check-placeholders.sh --expect-filled origin/main  # what ArgoCD reads
+  ```
 - **Store `Ready` but ExternalSecrets `SecretSyncedError`.** A misleading symptom:
   the `ClusterSecretStore` can report `Ready`/`store validated` while still
   pointing at a placeholder vault — Workload-Identity validation doesn't do a live

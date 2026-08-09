@@ -7,6 +7,9 @@
 // Velero writes namespace/state backups here; CloudNativePG can also target it
 // for Postgres Barman backups.
 //
+// Network exposure is an ACCEPTED RISK — the endpoint is reachable from any
+// network. Rationale and what would close it: docs/maintenance.md.
+//
 // Deploy:
 //   az deployment group create -g webservices-infra \
 //     -f infra/backup-storage.bicep -p storageAccountName=<name>
@@ -22,6 +25,9 @@ param location string = resourceGroup().location
 
 @description('Blob container for Velero backups.')
 param veleroContainerName string = 'velero'
+
+@description('Blob container for the shared Postgres server\'s Barman backups.')
+param cnpgSharedContainerName string = 'cnpg-shared'
 
 @description('Blob soft-delete retention (days) — recover accidentally/maliciously deleted backups.')
 param blobSoftDeleteDays int = 30
@@ -50,6 +56,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2024-01-01' = {
     // Plugin uses a storage-account key (via ESO from Key Vault), so shared-key
     // access is enabled.
     allowSharedKeyAccess: true
+    // Open by design — see the header note before changing.
     publicNetworkAccess: 'Enabled'
     networkAcls: {
       defaultAction: 'Allow'
@@ -77,6 +84,18 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2024-01-01'
 resource veleroContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2024-01-01' = {
   parent: blobService
   name: veleroContainerName
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// Declared here (not an imperative doc step) so a rebuild cannot skip it —
+// without this container the shared Cluster comes up but ContinuousArchiving
+// silently never goes True. Per-project escape-hatch containers (cnpg-<project>)
+// stay with scripts/onboard-cnpg-backup.sh.
+resource cnpgSharedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2024-01-01' = {
+  parent: blobService
+  name: cnpgSharedContainerName
   properties: {
     publicAccess: 'None'
   }

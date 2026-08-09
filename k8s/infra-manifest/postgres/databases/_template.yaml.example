@@ -30,7 +30,7 @@ metadata:
   name: postgres-PROJECT-dev-role
   namespace: postgres
 spec:
-  refreshInterval: 1h
+  refreshInterval: 24h
   secretStoreRef:
     name: azure-kv
     kind: ClusterSecretStore
@@ -81,7 +81,7 @@ metadata:
   name: postgres-PROJECT-prod-role
   namespace: postgres
 spec:
-  refreshInterval: 1h
+  refreshInterval: 24h
   secretStoreRef:
     name: azure-kv
     kind: ClusterSecretStore

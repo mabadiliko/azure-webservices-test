@@ -30,8 +30,14 @@ loki:
   commonConfig:
     replication_factor: 1
   auth_enabled: false
+  # Loki defaults to retention DISABLED — chunks accumulate in MinIO forever.
+  # The compactor enforces retention_period; delete requests go through s3.
+  compactor:
+    retention_enabled: true
+    delete_request_store: s3
   limits_config:
     allow_structured_metadata: false
+    retention_period: 744h # 31d
   # Flush chunks to object storage promptly rather than holding them in the WAL
   # for up to the 30m default — on a low-volume cluster this bounds how much
   # recent log data would be lost if the single Loki pod died before flushing.
@@ -90,11 +96,9 @@ monitoring:
     enabled: true
     labels:
       release: kps
-  # Loki's bundled self-monitoring stack (its own Grafana Agent + a `loki-canary`
-  # write-path probe). Alloy already ships logs, so this would duplicate it.
-  selfMonitoring:
-    enabled: false
-    grafanaAgent:
-      installOperator: false
-  lokiCanary:
-    enabled: false
+
+# TOP-LEVEL in chart 18.x (not under monitoring:, where it is silently ignored
+# and the canary DaemonSet deploys anyway). Alloy already ships logs; the
+# write-path probe would push synthetic log lines into MinIO around the clock.
+lokiCanary:
+  enabled: false

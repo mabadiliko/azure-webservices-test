@@ -7,9 +7,9 @@
 # the new <project>/infra/ directory and generates an Application that syncs it.
 # No hand-applied kubectl.
 #
-# It manages ONLY the infra/ subdirectory. A project's own workload under
-# chart/ is never swept up here — that stays opt-in via a separate Application
-# under apps-dev/apps-prod.
+# It manages ONLY the infra/ subdirectory — Layer 1. A project's own workload is
+# never swept up here: it runs by hand, or from the project's OWN GitOps repo via
+# gitops-appset.yaml in this directory.
 #
 # Apply once at bootstrap (kubectl apply -f); self-manages thereafter.
 apiVersion: argoproj.io/v1alpha1
@@ -30,7 +30,7 @@ spec:
             exclude: true
   template:
     metadata:
-      # path[1] is the <project> segment of k8s/projects/<project>/infra
+      # segment 2 is the <project> in k8s(0)/projects(1)/<project>(2)/infra(3)
       name: 'project-infra-{{index .path.segments 2}}'
     spec:
       project: project-infra

@@ -35,6 +35,11 @@ spec:
     path: k8s/argocd/projects
     directory:
       recurse: false
+      # Real AppProjects only. ArgoCD ignores non-.yaml files anyway, but state
+      # it so the *.yaml.example templates cannot be applied by accident — one
+      # of them would create an AppProject literally named "PROJECT".
+      include: '*.yaml'
+      exclude: '*.yaml.example'
   syncPolicy:
     automated:
       prune: false

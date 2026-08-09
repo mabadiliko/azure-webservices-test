@@ -3,12 +3,18 @@
 #
 # This is the privileged boundary: the ApplicationSet in k8s/argocd/projects-root/
 # generates one Application per project (from k8s/projects/<project>/infra/) that
-# runs under THIS project. A project's OWN workload runs under apps-dev/apps-prod
-# instead, which cannot create namespaces, RBAC, databases, or ExternalSecrets.
+# runs under THIS project.
 #
-# Blast radius is deliberately wider than apps-dev/apps-prod (it must create
-# Namespaces + cluster-scoped RBAC bindings + CNPG clusters) but is still infra-
-# owned: only files committed under k8s/projects/*/infra/ land here.
+# A project's OWN workload never runs here. It either runs by hand, or under the
+# project's own AppProject (k8s/argocd/projects/<project>.yaml), which is scoped
+# to that project's repo and namespaces and cannot create RBAC, ServiceAccounts,
+# Secrets, ExternalSecrets, databases or ArgoCD Applications.
+#
+# Blast radius is deliberately wider (this must create Namespaces + RBAC
+# bindings + CNPG resources) but is still infra-owned: ONLY files committed
+# under k8s/projects/*/infra/ land here, and only infra can commit them. This
+# project must never accept a project-controlled source — its RoleBinding +
+# namespace '*' combination is the escalation path in this cluster.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -18,10 +24,15 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   description: Infra-owned per-project resources (namespace, RBAC, shared DBs)
+  # EXACTLY this repo, not a glob. Everything this project syncs comes from
+  # k8s/projects/*/infra/ here, so nothing else needs to be reachable — and this
+  # is the AppProject that may create RoleBindings in any namespace, so a
+  # misapplied Application spec here is the worst case in the cluster.
+  #
+  # (Third-party sources like the Gateway API CRDs run under `infra`, not this
+  # project, so pinning here costs nothing.)
   sourceRepos:
-    # NOTE: globstar (**) is required — a single * does not match across '/', so
-    # 'https://github.com/*' would NOT match 'https://github.com/org/repo.git'.
-    - 'https://github.com/**'     # tighten to the specific org/repo once the slug is confirmed
+    - 'https://github.com/mabadiliko/azure-webservices-test.git'
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc

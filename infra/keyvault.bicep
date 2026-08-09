@@ -5,6 +5,10 @@
 // NOT the cluster RG — so it survives cluster teardown/rebuild. The cluster's
 // External Secrets Operator federates to this vault via Workload Identity.
 //
+// Network exposure is an ACCEPTED RISK — the vault endpoint is reachable from
+// any network. This vault is the cluster's root of trust, so the entry in
+// docs/maintenance.md ("Accepted risks") is worth reading before changing it.
+//
 // Deploy:
 //   az deployment group create -g webservices-infra \
 //     -f infra/keyvault.bicep -p keyVaultName=<name>
@@ -45,6 +49,7 @@ resource vault 'Microsoft.KeyVault/vaults@2024-11-01' = {
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
     enablePurgeProtection: enablePurgeProtection ? true : null
+    // Open by design — see the header note before changing.
     publicNetworkAccess: 'Enabled'
     networkAcls: {
       defaultAction: 'Allow'

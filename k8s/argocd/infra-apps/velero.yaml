@@ -1,9 +1,8 @@
-# Wave 4 — Velero: cluster/namespace backups to durable EXTERNAL Azure Blob
-# (decoupled from the in-cluster MinIO). Authenticates via Workload Identity.
+# Wave 4 — Velero: backups to durable EXTERNAL Azure Blob, via Workload Identity.
 #
-# The Velero managed-identity client-id and the storage account / node RG are
-# environment-specific; set them as Helm parameters (Azure identifiers, not
-# secrets). Replace the <...> placeholders, or manage out of band.
+# The <...> values are Azure identifiers (not secrets) — fill them per
+# docs/install.md §9. Unfilled, they reach Helm literally and Velero fails at
+# runtime, not at sync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -28,17 +27,17 @@ spec:
           - $values/k8s/infra-manifest/velero/values.yaml
         parameters:
           - name: serviceAccount.server.annotations.azure\.workload\.identity/client-id
-            value: 8d1458d7-eadf-4792-8699-d5eb6847ae80
+            value: <VELERO_CLIENT_ID>
           - name: configuration.backupStorageLocation[0].config.storageAccount
-            value: stwsv2backup
+            value: <BACKUP_STORAGE_ACCOUNT>
           - name: configuration.backupStorageLocation[0].config.resourceGroup
             value: webservices-infra
           - name: configuration.backupStorageLocation[0].config.subscriptionId
-            value: f1831dd3-3713-42ed-997f-d538ecdd960c
+            value: <SUBSCRIPTION_ID>
           - name: configuration.volumeSnapshotLocation[0].config.resourceGroup
-            value: MC_webservices-v2-test_webservices-v2-test_swedencentral
+            value: <NODE_RESOURCE_GROUP>
           - name: configuration.volumeSnapshotLocation[0].config.subscriptionId
-            value: f1831dd3-3713-42ed-997f-d538ecdd960c
+            value: <SUBSCRIPTION_ID>
     - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
       targetRevision: main
       ref: values

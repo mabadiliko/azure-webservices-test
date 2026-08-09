@@ -1,4 +1,6 @@
-# Creates the buckets the platform needs in MinIO: loki, thanos, velero.
+# Creates the buckets the platform needs in MinIO: loki, thanos.
+# (Velero does NOT back up to MinIO — it writes to the durable external Azure
+# Blob account, precisely so backups survive the cluster.)
 #
 # Why a standalone Job instead of the min.io chart's built-in bucket creation:
 # the chart provisions buckets via a Helm `post-install` hook, which ArgoCD maps
@@ -51,7 +53,7 @@ spec:
                     "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
                 echo "waiting for MinIO..."; sleep 3
               done
-              for b in loki thanos velero; do
+              for b in loki thanos; do
                 mc mb --ignore-existing "local/$b"
               done
-              echo "buckets ready: loki thanos velero"
+              echo "buckets ready: loki thanos"

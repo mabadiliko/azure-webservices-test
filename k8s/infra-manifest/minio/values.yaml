@@ -1,5 +1,6 @@
 # MinIO — in-cluster S3-compatible object storage.
-# Backing store for Loki (logs), Thanos (long-term metrics), and backups.
+# Backing store for Loki (logs) and Thanos (long-term metrics). Backups do NOT
+# land here — Velero and CNPG write to the durable external Azure Blob account.
 #
 # Standalone mode (single replica) — fits the budget/single-node cluster.
 # The PVC size is deliberately a Standard SSD tier boundary (E4 = 32 GiB):
@@ -24,7 +25,7 @@ resources:
 # Phase 2: migrated to an ExternalSecret from Key Vault via ESO).
 existingSecret: minio-root
 
-# Buckets (loki, thanos, velero) are created by the separate `minio-buckets`
+# Buckets (loki, thanos) are created by the separate `minio-buckets`
 # ArgoCD app (k8s/infra-manifest/minio-buckets/), NOT the chart's built-in
 # `buckets:` provisioning. The chart does it via a Helm post-install hook, which
 # ArgoCD maps to a PostSync hook that is skipped when MinIO can't sync cleanly on

@@ -21,20 +21,42 @@ spec:
       targetPort: http
       protocol: TCP
 ---
-# Headlamp's own server-side access. With OIDC on, day-to-day authorization is
-# the logged-in USER's RBAC (Headlamp proxies calls with the user's OIDC token),
-# not this ServiceAccount. Kept as cluster-admin to match the prior chart
-# behaviour; tighten later if we want the server SA itself more constrained.
+# Deliberately minimal, NOT cluster-admin — user actions proxy the user's own
+# token. Narrowing this fails quietly; verify per docs/install.md §11.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: headlamp-discovery
+  labels:
+    app.kubernetes.io/name: headlamp
+rules:
+  # API discovery, to build the resource map before anyone logs in.
+  - nonResourceURLs:
+      - /api
+      - /api/*
+      - /apis
+      - /apis/*
+      - /version
+      - /openapi
+      - /openapi/*
+    verbs: ["get"]
+  # "What may the CURRENT user do?" — evaluated against the caller, grants nothing.
+  - apiGroups: ["authorization.k8s.io"]
+    resources:
+      - selfsubjectaccessreviews
+      - selfsubjectrulesreviews
+    verbs: ["create"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: headlamp-admin
+  name: headlamp-discovery
   labels:
     app.kubernetes.io/name: headlamp
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: headlamp-discovery
 subjects:
   - kind: ServiceAccount
     name: headlamp
