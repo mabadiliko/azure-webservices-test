@@ -33,11 +33,11 @@ spec:
           - name: configuration.backupStorageLocation[0].config.resourceGroup
             value: webservices-infra
           - name: configuration.backupStorageLocation[0].config.subscriptionId
-            value: f1831dd3-3713-42ed-997f-d538ecdd960
+            value: f1831dd3-3713-42ed-997f-d538ecdd960c
           - name: configuration.volumeSnapshotLocation[0].config.resourceGroup
             value: MC_webservices-v2-test_webservices-v2-test_swedencentral
           - name: configuration.volumeSnapshotLocation[0].config.subscriptionId
-            value: f1831dd3-3713-42ed-997f-d538ecdd960
+            value: f1831dd3-3713-42ed-997f-d538ecdd960c
     - repoURL: https://github.com/mabadiliko/azure-webservices-test.git
       targetRevision: main
       ref: values
