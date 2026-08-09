@@ -99,10 +99,9 @@ alloy:
       loki.process "cluster_events" {
         forward_to = [loki.write.default.receiver]
 
+        // cluster must match the pod-log pipeline above.
         stage.static_labels {
           values = {
-            # Must match the pod-log pipeline above, or events land under a
-            # different `cluster` value and event panels read as empty.
             cluster = "webservices-v2",
           }
         }
