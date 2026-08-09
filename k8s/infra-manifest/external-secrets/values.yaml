@@ -30,8 +30,10 @@ serviceMonitor:
   enabled: true
   # ESO is wave 0, kube-prometheus-stack (which owns the ServiceMonitor CRD) is
   # wave 2. The chart's default renderMode `skipIfMissing` would silently emit
-  # NOTHING at first sync and never revisit it — metrics would just be absent
-  # with no error. alwaysRender emits the CR; ArgoCD retries until the CRD exists.
+  # NOTHING at first sync and never revisit it. alwaysRender emits the CR, which
+  # FAILS until the CRD lands — retries are finite (5), so on a first install the
+  # budget is usually spent before wave 2. Re-sync ESO after monitoring is up;
+  # a refresh alone will not restart a stalled operation. See docs/install.md §10.
   renderMode: alwaysRender
   additionalLabels:
     release: kps

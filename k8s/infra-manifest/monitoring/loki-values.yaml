@@ -102,3 +102,9 @@ monitoring:
 # write-path probe would push synthetic log lines into MinIO around the clock.
 lokiCanary:
   enabled: false
+
+# Must accompany lokiCanary.enabled: false — the chart's validate.yaml FAILS the
+# whole render when the helm test is on without the canary, and test.enabled
+# defaults to true.
+test:
+  enabled: false
