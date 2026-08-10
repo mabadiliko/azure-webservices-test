@@ -51,7 +51,7 @@ subjects:
     apiGroup: rbac.authorization.k8s.io
 roleRef:
   kind: ClusterRole
-  name: admin                      # or `view` — prod is a fair place to use view
+  name: view                      # or `view` — prod is a fair place to use view
   apiGroup: rbac.authorization.k8s.io
 ---
 # INDIVIDUAL access — bind a single developer. Delete this block if you only use
