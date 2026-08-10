@@ -1,0 +1,8 @@
+# Prod namespace for the project.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proj-wsj27-prod
+  labels:
+    scouterna.se/project: proj-wsj27
+    scouterna.se/env: prod
