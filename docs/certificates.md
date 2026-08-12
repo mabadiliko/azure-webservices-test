@@ -3,9 +3,10 @@
 How TLS certificates are issued on this cluster, and the open question of adding
 **DNS-01** alongside the HTTP-01 solver in use today.
 
-Status: **HTTP-01 is what runs.** DNS-01 is a design proposal — nothing below is
-deployed. Raised in review 2026-08-10, prompted by the number of distinct DNS
-zones already pointing at the cluster.
+Status: **HTTP-01 is what runs, and the recommendation is to keep it for now.**
+Nothing else below is deployed. Raised in review 2026-08-10, prompted by the
+number of distinct DNS zones already pointing at the cluster; a second reviewer
+pointed at **DNS-PERSIST-01**, which changes the answer — see that section.
 
 ## What runs today
 
@@ -103,10 +104,60 @@ at all** and reuses the federation this cluster already does twice
 That asymmetry, rather than any cert-manager detail, is what should drive the
 decision.
 
+## DNS-PERSIST-01 — the option worth waiting for
+
+Raised by a reviewer, and it attacks precisely the problem above. **DNS-PERSIST-01**
+replaces repeated proof-of-control with a **single standing TXT record** at
+`_validation-persist.<domain>`, naming the CA's issuer domain and our ACME
+account URI. Add `policy=wildcard` and it authorises wildcards too.
+
+**No DNS write access at validation time.** The record is published once, by
+hand, and reused for every issuance and renewal thereafter.
+
+That dissolves the credential question entirely — the thing this whole decision
+turns on:
+
+| | DNS-01 | DNS-PERSIST-01 |
+|---|---|---|
+| DNS credential in the cluster | **yes**, per zone | **none** |
+| Loopia zones | third-party webhook + API credential | one TXT record, no provider needed |
+| Project-owned zones | our cluster can rewrite their domain | they publish one record authorising our account; revocable at their end |
+| Wildcards | yes | yes (`policy=wildcard`) |
+
+**It is not usable yet — verified 2026-08-10, and the published timeline has
+already slipped:**
+
+- **Let's Encrypt:** in **staging**, *not* production. Deployment is explicitly
+  blocked — Aaron Gable (LE staff), June 2026: *"We will not be deploying
+  dns-persist-01 until [issue #64] is resolved."* The Feb 2026 announcement
+  targeted Q2; by May that had moved toward Q3, and the spec is still evolving.
+- **cert-manager:** [issue #8373][cm8373] is **open**, no assignee, no PR, no
+  branch. Nothing implemented.
+
+Both were "late Q1 / Q2 2026" on paper and neither has landed. **Re-check both
+before acting on this section** rather than trusting the dates.
+
+Spec is an [IETF ACME working-group draft][draft] (adopted Oct 2025; CA/Browser
+Forum ballot SC-088v3 passed the same month), so the direction is settled even
+though the details are not.
+
+[cm8373]: https://github.com/cert-manager/cert-manager/issues/8373
+[draft]: https://datatracker.ietf.org/doc/draft-ietf-acme-dns-persist/
+
 ## Recommendation
 
-**Start with one zone: `*.webservices.scouterna.net` on Azure DNS via Workload
-Identity.**
+**Do nothing yet.** HTTP-01 works, is proven on this cluster, and there is no
+wildcard need urgent enough to justify building a mechanism that may be obsolete
+within a year. Building DNS-01 now means per-zone credentials — the expensive,
+ongoing part — for a capability DNS-PERSIST-01 is on track to provide with a
+static record and no credential at all.
+
+**Revisit when either** a wildcard becomes genuinely blocking (the shared
+`*.webservices.scouterna.net` is the likely trigger), **or** Let's Encrypt ships
+dns-persist-01 to production *and* cert-manager implements it.
+
+**If a wildcard is needed before then**, the smallest step is one zone:
+`*.webservices.scouterna.net` on Azure DNS via Workload Identity.
 
 - It is infra-owned, so no third party's credential enters the cluster.
 - No stored secret — same federation pattern as ESO and Velero.
@@ -122,7 +173,9 @@ Then treat each further zone as its own decision, with that precedent to follow.
   a credential that can rewrite someone else's domain living in this cluster. A
   project cannot create one itself — the per-project AppProject excludes `Secret`
   and `ExternalSecret` — so this stays infra-granted, like a database. Worth
-  deciding deliberately rather than by omission.
+  deciding deliberately rather than by omission. **DNS-PERSIST-01 would make this
+  question mostly go away** — the project publishes one TXT record instead of
+  handing over a credential.
 - **Would `webservices.scouterna.net` be delegated to Azure DNS, or moved?**
   Delegation (an `NS` record at Loopia for that subdomain only) keeps the parent
   zone where it is and is the smaller change.
@@ -130,7 +183,9 @@ Then treat each further zone as its own decision, with that precedent to follow.
   in one namespace produces a Secret in that namespace; Traefik will not read it
   from another. Options are a per-namespace `Certificate` against the same
   wildcard issuer, or replicating the Secret. **Unresolved — decide before
-  promising projects a wildcard.**
+  promising projects a wildcard.** Note this is a Kubernetes/Traefik question,
+  not an ACME one: **no challenge type solves it**, DNS-PERSIST-01 included. It
+  determines whether a wildcard actually saves the work it appears to.
 - **Propagation timing.** DNS-01 fails differently from HTTP-01: a certificate
   sits `Pending` while cert-manager waits for the TXT record to propagate. Add
   `kubectl describe challenge` to the troubleshooting notes if this lands.
