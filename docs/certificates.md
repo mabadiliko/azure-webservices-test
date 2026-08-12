@@ -83,6 +83,40 @@ solvers:
 Adding a zone later is additive — existing certificates keep using HTTP-01,
 untouched.
 
+### What happens to existing Ingresses
+
+**Nothing, and no manifest needs changing.** Two annotations are involved and
+they behave differently:
+
+| Annotation | Role | If DNS-01 is selected |
+|---|---|---|
+| `cert-manager.io/cluster-issuer` | **Required.** Names the issuer; without it the ingress-shim ignores the Ingress and no certificate is created. | still required, unchanged |
+| `acme.cert-manager.io/http01-ingress-class` | Optional. **HTTP-01 only** — overrides which ingress class solves the challenge. | **silently ignored** |
+
+The second is *exclusively* an HTTP-01 setting, per the cert-manager docs: if a
+certificate is solved by DNS-01, the annotation is not read at all. It does not
+*select* HTTP-01 either — solver choice comes entirely from the issuer's
+`solvers` list matching the certificate's DNS names. It only says which ingress
+class to use once HTTP-01 has already been chosen, and it **overrides**
+`solvers.http01.ingress.class` in the ClusterIssuer when both are present.
+
+On this cluster it is redundant — the issuer already sets `class: traefik` and
+Traefik is the only ingress controller. Three infra manifests set it anyway
+(`dex`, `headlamp`, `kube-prometheus-stack`), harmlessly: same value as the
+issuer default. Its real use is solving challenges through a *different* ingress
+class than the app's own (e.g. an internal service whose challenge must arrive
+via a public ingress).
+
+So adding a scoped DNS-01 solver is **non-breaking**: for hosts in the selected
+zone the HTTP-01 annotation goes quiet, and for every other host nothing changes.
+That is a concrete argument for the scoped-solver shape over adding a second
+ClusterIssuer, which would require every project to switch its
+`cluster-issuer` annotation.
+
+> This holds **only** because the HTTP-01 solver stays in the list as the
+> unselected fallback. A DNS-01 solver added *without* a selector captures every
+> certificate cluster-wide, and those annotations go inert everywhere at once.
+
 ## The part that needs deciding: credentials, per zone
 
 **DNS-01 is per-zone, not per-cluster.** Each zone validated this way needs
