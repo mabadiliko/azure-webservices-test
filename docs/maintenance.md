@@ -82,6 +82,21 @@ Thanos, Headlamp.
   (check `az aks get-versions -l <region>`). On a single-node cluster the
   upgrade is briefly disruptive — expect a short control-plane/node blip.
 
+**A minor upgrade leaves Pod Security behind.** Project namespaces pin
+`pod-security.kubernetes.io/enforce-version` (see
+`k8s/projects/_template/infra/namespace-*.yaml`), which is deliberate — the
+cluster's admission rules should not change underneath running workloads because
+the control plane moved. The cost is that the pin does not follow the upgrade:
+after moving to `1.37` the namespaces still enforce `1.36` semantics, silently,
+and any policy tightening in the new minor is not applied.
+
+So bump the pin as a **separate, later commit** — cluster first, verify, then the
+labels. The `warn`/`audit` labels are intentionally left unpinned, so between the
+two the warnings already show what the newer level would enforce. Every project
+namespace carries the pin; `.github/workflows/checks.yml` fails a project
+namespace committed without one, but it cannot tell a stale pin from a current
+one.
+
 ## Backup strategy (Velero)
 
 Two schedules in `k8s/infra-manifest/velero/schedules/schedules.yaml`, writing to
@@ -113,6 +128,37 @@ which is the correct way to back up a live database. Leaving it in would also
 snapshot its 32Gi PVC on a second, overlapping path. It is still covered by
 `weekly-full`.
 
+### Infra volumes: what is actually protected
+
+"Infra is reproducible from Git" is true of the **manifests**, not of the ~124Gi
+of state in infra PVCs. Those are covered only by `weekly-full` (35-day
+retention). Per volume:
+
+| PVC | Size | If lost |
+|---|---|---|
+| `postgres/shared-1` | 32Gi | **Own CNPG backup at 02:30** — the real protection; Velero is secondary |
+| `minio/minio` | 32Gi | Backing store for Loki + Thanos. **Weekly is the only copy** — see below |
+| `monitoring/prometheus` | 32Gi | Recent metrics; long-term copies live in Thanos → MinIO |
+| `monitoring/loki` | 16Gi | Recent logs; chunks ship to MinIO |
+| `monitoring/grafana` | 8Gi | **Gap — see below** |
+| `monitoring/alertmanager` | 4Gi | Silences only; regenerate by hand |
+
+**Two accepted decisions, recorded rather than left implicit:**
+
+- **MinIO gets weekly cover only, and that is accepted.** It is single-node and
+  holds observability history that Prometheus and Loki have already flushed to
+  it. Losing it between weekly backups loses up to a week of long-term metrics
+  and logs — annoying, not operationally critical, and the alternative (daily
+  snapshots of a 32Gi volume holding derived data) is not worth the storage.
+  Revisit if MinIO ever holds something that is *not* derived.
+- **Grafana is the real gap.** Dashboards are vendored in Git and provisioned,
+  but **anything created through the UI lives only in this PVC**, with weekly as
+  the only copy. A dashboard built on Monday and lost on Friday is gone. The
+  cheap mitigation is social, not technical: build dashboards in Git
+  (`k8s/infra-manifest/monitoring/dashboards/`), and treat UI-created ones as
+  scratch. Moving `monitoring` into the daily schedule would fix it, but would
+  also pull in the 80Gi of Prometheus/Loki/derived data alongside it.
+
 **Verifying.** Backups fail quietly — a `Schedule` that never produces a backup
 looks the same as one that does until a restore is needed:
 
@@ -126,11 +172,17 @@ Watch for `PartiallyFailed` on `weekly-full` — a few un-snapshottable cluster
 resources are expected there. On `daily-projects` it is not; investigate.
 
 > **Restores are documented in [onboarding.md](onboarding.md)** ("Restore a
-> namespace or PVC") and **have never been exercised on this cluster**. The first
-> real restore should be treated as a test of the procedure as much as a
-> recovery. PVC contents also depend on the `VolumeSnapshotClass` labeled
-> `velero.io/csi-volumesnapshot-class: "true"` — without it, backups silently
-> capture object state but no volume data.
+> namespace or PVC") and were **verified end-to-end on 2026-08-10** — real Azure
+> disk snapshot, PVC deleted and restored in place with byte-identical contents,
+> plus a restore into a second namespace. Two traps found in that test are
+> recorded there: an empty `kubectl get volumesnapshot` is normal (Velero keeps
+> only the durable Azure snapshot), and `--include-resources` silently breaks
+> CSI restores unless it also names `volumesnapshots,volumesnapshotcontents`.
+>
+> **The scheduled backups do not yet exercise volumes.** `daily-projects`
+> excludes every infra namespace and no project has a PVC, so the nightlies so
+> far captured object state only. A green `Completed` on a nightly is not
+> evidence that volume backup works — that only starts once a project has a PVC.
 
 ## Automating drift detection
 

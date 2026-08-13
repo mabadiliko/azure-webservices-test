@@ -170,9 +170,30 @@ subject kinds; choose per your case (and mix freely — one file can hold both):
 
 In both cases: add one RoleBinding **per namespace** the team/developer should
 access (a dev/prod project needs a binding in each), and use ClusterRole `admin`
-(full control within the namespace) or `view` (read-only). **Commit** — ArgoCD
-creates the RoleBinding(s). Confirm:
+(full control within the namespace) or `view` (read-only).
+
+**Commit** — ArgoCD creates the RoleBinding(s):
+
 ```bash
+cd "$(git rev-parse --show-toplevel)"          # the cp above left you in the project dir
+
+git add "k8s/projects/$PROJECT/infra/developer-rbac.yaml"
+git status --short                             # only that file should be staged
+git diff --cached                              # check the identity strings before pushing
+
+git commit -m "Grant developer access to $PROJECT"
+git push
+```
+
+The `.example` file stays in place and is never synced — only the renamed
+`developer-rbac.yaml` is. Stage it by name rather than `git add -A`, so an
+unrelated edit elsewhere in the tree does not travel with it.
+
+Confirm once ArgoCD has synced (a minute or so):
+
+```bash
+kubectl get rolebinding -n <namespace>
+
 # individual:
 kubectl auth can-i create deployments -n <namespace> --as="aks:jwt:<github-login>"
 # team (impersonate the group):
@@ -289,6 +310,23 @@ Grafana keeps its old config until the pod restarts.
 Layer 2 belongs to the project. There are exactly **two routes**, and neither
 puts your workload manifests in the infra repo.
 
+> **Your namespaces enforce the `baseline` Pod Security Standard,** by both
+> routes. The API server **rejects** a pod that is `privileged`, uses host
+> namespaces (`hostNetwork`, `hostPID`, `hostIPC`), mounts a `hostPath` volume,
+> claims a `hostPort`, or adds capabilities beyond the default set — the node is
+> shared with every other project and the platform itself, so nothing that
+> reaches it is available to a workload. Ordinary containers, including ones
+> running as root, are unaffected.
+>
+> You will also see **warnings** citing `restricted` (run as non-root, drop all
+> capabilities, `seccompProfile: RuntimeDefault`). Those are advisory — the pod
+> is admitted. They show what a future tightening would ask for, so treat them as
+> a to-do list rather than an error.
+>
+> If your workload genuinely needs something `baseline` forbids, talk to infra
+> before working around it. The answer is usually a different way to get the same
+> result; where it is not, the namespace label is infra's to change.
+
 ### C1. By hand (the default)
 
 `helm install` / `kubectl apply` with your own credentials, in your own
@@ -303,6 +341,8 @@ Keep a GitOps repo **you** control. Infra wires it into ArgoCD **once**; after
 that you commit to your own repo and ArgoCD syncs it — no infra involvement in
 day-to-day changes, and no handing files over.
 
+#### What to give infra
+
 Ask infra for a registration, giving them:
 
 1. **the repo URL** (and branch) — public needs nothing further; a **private**
@@ -316,6 +356,8 @@ Ask infra for a registration, giving them:
    automated; dev is often manual so you can keep hand-editing.
 
 Infra commits two small files and you are live. You never touch the infra repo.
+
+#### Moving from by-hand (C1) to GitOps
 
 **Moving from C1 to C2 is a no-op if the repo matches what is running.** Same
 release name, same namespace, same values → ArgoCD **adopts** the running
@@ -335,7 +377,7 @@ them (`helm get values <release> -n <namespace>`) before committing, not after.
 > wholesale. Capture anything you want to keep first. See
 > [argocd.md](argocd.md).
 
-### What your repo may deploy
+#### What your repo may deploy
 
 Your AppProject names **only your repo** and **only your namespaces**, so you
 cannot deploy from another project's repo or into another project's namespace.
@@ -518,13 +560,27 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
 (infra-owned), while the connection Secret goes in the project's namespace.
 
 1. **Infra: create the databases.** Generate a password per environment into Key
-   Vault, then copy the template and commit:
+   Vault, then copy the template and commit.
+
+   **Set `ENVS` to this project's actual environments** — the template and the
+   loops below assume `dev prod`, but §A2 makes that set flexible. Add `staging`
+   if the project has one; drop `prod` if it does not. `$PROJECT` comes from §A1
+   and must still be set in this shell:
+
    ```bash
-   for env in dev prod; do
+   echo "PROJECT=$PROJECT"          # empty? re-run: export PROJECT=<project name>
+   ENVS="dev prod"                  # adjust to match this project's namespaces
+
+   for env in $ENVS; do
      az keyvault secret set --vault-name kv-scouterna-webservices \
        --name "postgres-$PROJECT-$env-password" \
        --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)" >/dev/null
    done
+
+   # Confirm one secret per environment before moving on — a wrong or empty
+   # $PROJECT produces a plausible name that fails much later, at sync time.
+   az keyvault secret list --vault-name kv-scouterna-webservices \
+     --query "[?starts_with(name,'postgres-$PROJECT-')].name" -o tsv
 
    cd "$(git rev-parse --show-toplevel)/k8s/infra-manifest/postgres/databases"
    sed "s/PROJECT/$PROJECT/g" _template.yaml.example > "$PROJECT.yaml"
@@ -532,7 +588,26 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
    That file holds, **for dev and for prod**, an `ExternalSecret` (the role
    password, from Key Vault), a `DatabaseRole`, and a `Database` owned by it.
    Each environment gets its own role, so a leaked dev credential cannot reach
-   prod data. Commit — the `postgres-databases` app applies it.
+   prod data.
+
+   **If `ENVS` is not `dev prod`, edit `$PROJECT.yaml` now** — add or delete
+   whole blocks so it matches. Then commit; the `postgres-databases` app applies
+   it:
+
+   ```bash
+   cd "$(git rev-parse --show-toplevel)"
+   git add "k8s/infra-manifest/postgres/databases/$PROJECT.yaml"
+   git diff --cached                    # check the names before pushing
+   git commit -m "Add $PROJECT databases on the shared server"
+   ```
+
+   > **Single-namespace project** (§A2's "one namespace only", where the
+   > namespace is just `$PROJECT` with no suffix): the env suffix is part of
+   > every name in the template, so it cannot be looped away. Use
+   > `ENVS="dev"` for the loop above, then in `$PROJECT.yaml` delete the prod
+   > block and strip `-dev` from the names in what remains — and rename the Key
+   > Vault secret to match (`postgres-$PROJECT-password`), since the loop created
+   > it with the `-dev` suffix.
 
 2. **Project: materialize the credentials.** In the project's own directory:
    ```bash
@@ -543,20 +618,42 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
    `port`, `dbname`, `username`, `password` and a ready-made `uri`, each pointing
    at that environment's own database.
 
+   Commit it, then **push both commits** — ArgoCD syncs from the remote, so an
+   unpushed commit changes nothing in the cluster:
+
+   ```bash
+   cd "$(git rev-parse --show-toplevel)"
+   git add "k8s/projects/$PROJECT/infra/database.yaml"
+   git status --short                   # one line: R ...database.yaml.example -> database.yaml
+   git commit -m "Materialize $PROJECT database credentials"
+   git push
+   ```
+
    > **dev + prod is the default**, matching the namespaces in §A2. For a single
    > environment, delete the prod block from **both** files and drop the `-dev`
    > suffix in what remains; for staging, copy a block in each and change the
    > suffix. Remember the matching Key Vault password either way.
 
-3. **Verify** — the database and role exist, and the project's Secret is synced:
+3. **Verify** — the database and role exist, and the project's Secret is synced.
+   Uses the same `$ENVS` set from step 1:
    ```bash
-   kubectl get database,databaserole -n postgres | grep "$PROJECT"   # -dev and -prod
-   for env in dev prod; do
+   kubectl get database,databaserole -n postgres | grep "$PROJECT"   # one pair per env
+   for env in $ENVS; do
      kubectl get externalsecret -n "$PROJECT-$env"                   # READY=True
+     kubectl get secret -n "$PROJECT-$env" "$PROJECT-db" \
+       -o jsonpath='{.data.dbname}' | base64 -d; echo                # PROJECT-<env>
    done
-   kubectl get secret -n "$PROJECT-prod" "$PROJECT-db" \
-     -o jsonpath='{.data.dbname}' | base64 -d; echo                  # PROJECT-prod
    ```
+   **Empty output usually means an unpushed commit, not a broken database.**
+   Nothing exists in the cluster until ArgoCD reads it from the remote, and the
+   symptom — no `Database`, no `ExternalSecret` — looks identical to a failed
+   sync. Check that first:
+
+   ```bash
+   git status -sb | head -1        # "ahead N" = not pushed yet
+   kubectl get app -n argocd postgres-databases "$PROJECT"   # Synced / Healthy
+   ```
+
    The shared server's own health and backups are infra's concern, not the
    project's: `kubectl get cluster -n postgres shared`.
 
@@ -585,11 +682,22 @@ in the durable backup storage account (external to the cluster).
 > weekly full backup may report `PartiallyFailed` on a few un-snapshottable
 > cluster resources — that's expected; it's a best-effort safety net.)
 
+> **`kubectl get volumesnapshot` returns nothing after a successful backup — do
+> not read that as failure.** Velero deletes the temporary `VolumeSnapshot`
+> object once the durable Azure snapshot exists, and records the snapshot ID in
+> the backup. Verify the right way:
+> ```bash
+> velero backup describe <backup-name> --details    # CSI Snapshots ... Result: succeeded
+> ```
+> An empty `volumesnapshot` list is the normal steady state.
+
 ### Restore a namespace or PVC
 
-> These are Velero's standard CSI-restore commands. They have not yet been
-> exercised against this cluster — **verify on the first real restore** and
-> correct this runbook if anything differs.
+> **Verified end-to-end on this cluster (2026-08-10):** backup with a real Azure
+> disk snapshot, PVC and pod deleted, restored in place, file contents
+> byte-identical (MD5 matched, including an 8 MB random blob); and restored into
+> a second namespace with the same checksums. The two gotchas below both came
+> out of that test.
 
 Restores need the Velero CLI (`velero` — install from the Velero releases) with
 `KUBECONFIG` pointing at the cluster.
@@ -611,11 +719,16 @@ Restores need the Velero CLI (`velero` — install from the Velero releases) wit
      --include-namespaces <project>-prod \
      --namespace-mappings <project>-prod:<project>-restore
    ```
-4. **Restore only specific resources** (e.g. just PVCs):
+4. **Restore only specific resources** — **`--include-resources` silently breaks
+   CSI restores.** A filter that omits the snapshot objects produces a restore
+   that reports `Completed` while the PVC sits `Pending` **forever**: its
+   `dataSource` points at a `VolumeSnapshot` the filter excluded. The tell is
+   `CSI Snapshot Restores: <none included>` in `velero restore describe`.
+   Either omit the filter, or include the snapshot kinds explicitly:
    ```bash
    velero restore create --from-backup <backup-name> \
      --include-namespaces <project>-prod \
-     --include-resources persistentvolumeclaims,persistentvolumes
+     --include-resources persistentvolumeclaims,persistentvolumes,volumesnapshots,volumesnapshotcontents
    ```
 5. **Watch it**:
    ```bash

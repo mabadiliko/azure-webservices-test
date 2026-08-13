@@ -265,11 +265,25 @@ az keyvault secret set --vault-name $KEY_VAULT_NAME --name backup-storage-accoun
 > Without this secret the failure is quiet: the `Cluster` starts and serves
 > queries, `postgres-backup-storage` sits `SecretSyncedError`, and
 > `ContinuousArchiving` never goes `True` — a working database that is not being
-> backed up. Check both after the cluster is up:
+> backed up. **§11 verifies this** once there is a cluster to verify against.
+
+> **REBUILD ONLY — the `cnpg-shared` container must be EMPTY.** Barman refuses to
+> archive into a destination that already holds another server's backups, and the
+> storage account is durable, so a rebuild inherits the old cluster's blobs. The
+> symptom is identical to the missing-key case above: `Ready=True`, queries
+> served, `ContinuousArchiving=False`, nothing archived. Check, and clear the old
+> server's prefix if anything is there:
 > ```bash
-> kubectl get externalsecret -n postgres
-> kubectl get cluster -n postgres shared -o jsonpath='{.status.conditions}'
+> KEY=$(az storage account keys list -g $INFRA_RG -n $BACKUP_STORAGE_ACCOUNT --query '[0].value' -o tsv)
+> az storage blob list --account-name $BACKUP_STORAGE_ACCOUNT --account-key "$KEY" \
+>   -c cnpg-shared --query 'length(@)'      # expect 0 on a fresh install
+> az storage blob delete-batch --account-name $BACKUP_STORAGE_ACCOUNT --account-key "$KEY" \
+>   -s cnpg-shared --pattern 'shared/*'     # only if the above is non-zero
 > ```
+> Use the **account key**, not `--auth-mode login`: listing blobs needs a Storage
+> Blob Data role that infra logins do not necessarily hold, and the failure looks
+> like an empty container rather than a permission error. Leave the other
+> containers alone — `velero` and any `cnpg-<project>` hold live backups.
 
 ## 6. Write the bootstrap secrets to Key Vault
 
@@ -389,11 +403,19 @@ A good `what-if` ends with `Resource changes: 1 to create.` and a
 ## 7b. Get credentials + verify
 
 ```bash
-az aks get-credentials -g $CLUSTER_RG -n $CLUSTER --admin --file ./.kube-webservices   # gitignored (.kube-*)
+az aks get-credentials -g $CLUSTER_RG -n $CLUSTER --admin --overwrite-existing \
+  --file ./.kube-webservices                     # gitignored (.kube-*)
 export KUBECONFIG=$PWD/.kube-webservices
 kubectl get nodes -o wide                        # Ready, Standard_D4s_v6, AzureLinux
 kubectl -n kube-system get pods | grep cilium    # cilium + cilium-operator Running (eBPF dataplane)
 ```
+
+> **`--overwrite-existing` matters on a rebuild.** A rebuilt cluster reuses the
+> name but gets a new CA cert and endpoint, so a leftover entry from the previous
+> cluster is stale. Without the flag `az` refuses to replace it; with it the entry
+> is replaced (it overwrites the matching cluster entry, not the whole file). A
+> stale entry fails as TLS or connection errors that read like a broken new
+> cluster. To be certain of a clean file, `rm -f ./.kube-webservices` first.
 
 The `--admin` kubeconfig is the infra bootstrap credential — a static cert that
 bypasses Dex and RBAC entirely. It is **deleted in §12** once developer SSO is
@@ -430,8 +452,10 @@ az identity federated-credential create -g $INFRA_RG --identity-name $VELERO_IDE
 
 Without this, Headlamp and `kubectl` SSO **do not work**: Dex issues a valid
 token, the API server does not trust it, and every request is rejected. It is an
-AKS control-plane resource applied with `az` — not GitOps — so it is easy to skip
-and the symptom (a working login that then sees nothing) does not point at it.
+AKS control-plane resource applied with `az` — not GitOps — so it is easy to skip,
+and the symptom does not point at it: the GitHub login succeeds and then **bounces
+straight back to the login screen**. (A login that succeeds and shows an *empty*
+UI is a different fault — that is RBAC, §8c or Headlamp's own role.)
 
 It is placed here, before ArgoCD, because it needs only a running cluster — not
 Dex itself. The `az feature register` can take several minutes to leave
@@ -511,6 +535,18 @@ This maps a Dex token to a cluster identity: the user becomes
 `aks:jwt:<org>:<Team Display Name>` — the **display name verbatim, spaces
 included**, not the slug.
 
+**Assert it landed before moving on.** This is the only step in Part 3 that
+leaves no cluster-visible artifact — no pod, no CR, nothing `kubectl` can show —
+so a skipped or failed §8b stays invisible until someone tries to log in at §11,
+about fifteen steps later:
+
+```bash
+az aks jwtauthenticator list -g $CLUSTER_RG --cluster-name $CLUSTER \
+  --query "[].name" -o tsv        # expect: dex
+```
+
+Empty output means it was never applied. Re-run the `add` above.
+
 ## 8c. Grant the infra team cluster-admin
 
 RBAC still has to say what those identities may do. Bind the infra team's group
@@ -522,14 +558,13 @@ kubectl create clusterrolebinding webservices-infra-admin \
   --group="aks:jwt:Scouterna:Webservices Infra"
 ```
 
-> **Read the group string from a real token — do not guess it.** After someone
-> logs in to Headlamp once, Dex logs the exact groups it emitted:
-> ```bash
-> kubectl -n dex logs deploy/dex | grep "login successful" | tail -1
-> ```
-> Prefix each with `aks:jwt:` to get the RBAC string. A mismatched name (slug vs
-> display name, or a differing space) fails **silently** — the login succeeds and
-> the user simply sees nothing.
+> **The group string must match what Dex emits, exactly.** It is the team's
+> **display name verbatim** (spaces included), not the slug. A mismatch fails
+> **silently** — login succeeds and the user simply sees nothing.
+>
+> Dex does not exist yet (wave 2, deployed in §10), so this binding is made from
+> the known team name now and **confirmed against a real token in §11**. RBAC
+> accepts a group that has no members yet, so creating it here is safe.
 
 ### The shared developer kubeconfig
 
@@ -578,11 +613,10 @@ users:
 EOF
 ```
 
-Verify it end-to-end (opens a browser for GitHub login the first time):
-
-```bash
-kubectl --kubeconfig k8s/access/oidc-kubeconfig get nodes
-```
+Generating it here is fine — the server address and CA come from the running
+cluster. **It cannot be tested yet:** it authenticates through Dex, which is
+wave 2 and does not exist until §10, and it needs `dex.$HOST` to resolve, which
+needs the DNS from §11. Verification is in §11.
 
 > **`--oidc-client-id=kubectl` must be in the JWTAuthenticator's `audiences`.**
 > `dex.json` lists both `headlamp` and `kubectl`; if `kubectl` is missing there,
@@ -720,7 +754,7 @@ kubectl -n argocd rollout status statefulset/argocd-application-controller
 
 kubectl apply -f k8s/argocd/projects/              # infra + project-infra (+ per-project)
 kubectl apply -f k8s/argocd/infra-root-app.yaml    # app-of-apps; recurses infra-apps/ by sync-wave
-kubectl apply -f k8s/argocd/projects-root/         # ApplicationSet: generates one App per project
+kubectl apply -f k8s/argocd/projects-root/         # both ApplicationSets (see below)
 ```
 
 **These three applies are the only hand-applied surface, and they happen once —
@@ -739,14 +773,20 @@ a commit. Confirm the adoption took:
 kubectl get app -n argocd argocd-projects   # expect: Synced / Healthy
 ```
 
-The ApplicationSet is what makes project onboarding work — it watches
-`k8s/projects/*/infra/` and generates an Application per project. Without it a
+Two ApplicationSets make project onboarding work, one per route. Without them a
 project can be committed correctly and **nothing happens**, with no error
-anywhere. Confirm it exists:
+anywhere. Confirm both exist:
 
 ```bash
-kubectl get applicationset -n argocd     # expect: project-infra
+kubectl get applicationset -n argocd     # expect: project-infra AND project-gitops
 ```
+
+- **`project-infra`** watches `k8s/projects/*/infra/` and generates the
+  infra-owned Application per project (namespaces, developer RBAC, database).
+- **`project-gitops`** reads each `k8s/projects/*/gitops.yaml` and generates the
+  AppProject + Applications for a project that runs its **own** GitOps repo
+  (see [onboarding.md](onboarding.md)). It produces nothing until a project
+  declares one, so an empty result from `kubectl get appproject` is normal.
 
 After you apply the root app it takes a minute or two for ArgoCD to discover the
 child apps and start syncing them wave by wave — `get applications` showing
@@ -763,6 +803,19 @@ The root app brings up every common service in dependency order:
 | 3 | thanos, headlamp, postgres-databases (per-project databases on the shared server) |
 | 4 | governance (alerts + dashboard), velero |
 
+> **`external-secrets` will go `Degraded` on a first install — this is expected.**
+> Its ServiceMonitor cannot be created until the CRD arrives with monitoring in
+> wave 2, and ArgoCD's retry budget (5 attempts) is normally spent before then.
+> Once monitoring is `Synced`, re-sync ESO — a **refresh is not enough**, because
+> it only re-reads Git and does not restart a stalled operation:
+> ```bash
+> kubectl patch app -n argocd external-secrets --type merge \
+>   -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"main"}}}'
+> ```
+> If monitoring itself is stuck at `Unknown`, that is a render failure, not a
+> sync failure — one bad source fails the whole multi-source app. Check with
+> `kubectl -n argocd get app monitoring -o jsonpath='{.status.conditions}'`.
+
 ## 11. Verify + DNS
 
 ```bash
@@ -777,6 +830,86 @@ Traefik LoadBalancer.
 
 If some apps don't come up, see **Troubleshooting** below — the most common cause
 is an unfilled placeholder from §9.
+
+### The Sealed Secrets controller adopted the DURABLE key
+
+**Check this on every rebuild — it is a race, and losing it is invisible.** The
+controller adopts an existing sealing key if it finds one at startup, and mints
+its own if it does not. Sync waves order when apps *start syncing*, not when
+their resources are *ready*, so the wave-1 `ExternalSecret` can materialize
+seconds after the wave-2 controller has already looked. Observed on a real
+install: the controller found no keys 8s after starting, minted its own, and
+ESO's key landed 41s later.
+
+A controller running on a self-minted key is **fully healthy in every view** —
+and every `SealedSecret` committed against the durable key silently fails to
+decrypt, including after the next rebuild.
+
+```bash
+kubectl -n sealed-secrets logs deploy/sealed-secrets-controller --tail=50 | grep -i 'private key'
+```
+
+Expect `registered private key` with **`secretname=sealed-secrets-key`**. A
+generated name like `sealed-secrets-keyXXXXX` means it lost the race. The fix is
+a restart, once the durable key exists:
+
+```bash
+kubectl -n sealed-secrets rollout restart deploy/sealed-secrets-controller
+```
+
+Then confirm the fingerprint matches Key Vault, and that the durable key is the
+newest (the controller seals with the most recent key it holds).
+
+### Backups are actually running
+
+Both backup paths report healthy while doing nothing, so check them explicitly.
+`BackupStorageLocation: Available` above covers Velero; the shared Postgres needs
+its own check, because a `Cluster` that serves queries perfectly can be archiving
+nothing at all:
+
+```bash
+kubectl get externalsecret -n postgres          # postgres-backup-storage -> READY True
+kubectl get cluster -n postgres shared -o jsonpath='{.status.conditions}' | tr ',' '\n' | grep -i archiv
+```
+
+`ContinuousArchiving` must be `True`. If it is not, the cause is upstream in the
+install: either the `backup-storage-account-key` secret is missing from Key Vault
+(§5) or the `cnpg-shared` container does not exist. Both leave the database up
+and unbacked-up, and neither raises an alert.
+
+### IMDS is blocked
+
+`deny-imds-egress` (wave 0, in `cluster-infra`) denies egress to the Azure
+Instance Metadata Service from every namespace except `kube-system`, closing the
+path where any pod mints tokens for the node's kubelet identity. **An unenforced
+policy looks identical to an enforced one in `get applications`** — the app is
+`Synced` either way, because the object exists. Probe it:
+
+```bash
+kubectl get crd ciliumclusterwidenetworkpolicies.cilium.io   # CRD present at all
+kubectl get ciliumclusterwidenetworkpolicies deny-imds-egress
+
+kubectl run imds-probe --rm -it --restart=Never -n <project-ns> \
+  --image=curlimages/curl:latest -- \
+  curl -sS -m 5 -H 'Metadata:true' \
+  'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
+```
+
+The probe must exit **28** (timeout). Anything else is **not** a pass: a JSON
+document means the policy is not being enforced — check the CRD exists and that
+`cluster-infra` synced it — and any other failure means the probe never ran.
+
+Then confirm the Azure-authenticating components still work, since they must be
+using Workload Identity rather than the node identity:
+
+```bash
+kubectl get externalsecrets -A                  # READY True, still refreshing
+kubectl -n velero get backupstoragelocation default   # -> Available
+```
+
+If an `ExternalSecret` starts failing only *after* this policy applies, it was
+silently falling back to the node identity through IMDS — fix the federated
+credential (§8), don't widen the policy.
 
 ### Dual-stack DNS
 
@@ -887,7 +1020,25 @@ So verify by using it, once, by hand:
 2. **List resources** — open a namespace and view its Pods, then open one Pod.
 3. Confirm you see the namespaces your team's RBAC grants, and no others.
 
-If the UI is blank or errors, check the backend rather than the frontend:
+**Three different faults all read as "SSO is broken" — the symptom tells them
+apart, so identify it before digging:**
+
+| Symptom | Cause | Where |
+|---|---|---|
+| Login **bounces back to the login screen** | API server does not trust Dex's token | **§8b** — assert the JWTAuthenticator exists |
+| GitHub rejects you at Dex ("user not in required orgs or teams") | org/team gate | §2b, `orgs:` in dex values |
+| Login **succeeds, UI shows nothing** | RBAC | §8c group string, or Headlamp's own role below |
+
+The bounce-back case is the easiest to misread as a permissions problem, because
+the login itself works. Check §8b first — it leaves no cluster-visible artifact,
+so it is also the easiest step to have skipped:
+
+```bash
+az aks jwtauthenticator list -g $CLUSTER_RG --cluster-name $CLUSTER --query "[].name" -o tsv
+```
+
+If you are **in** but the UI is blank or errors, then it is RBAC — check the
+backend rather than the frontend:
 
 ```bash
 kubectl logs -n headlamp deploy/headlamp --tail=50 | grep -i -E 'forbidden|error'
@@ -898,6 +1049,43 @@ kubectl auth can-i --list --as=system:serviceaccount:headlamp:headlamp | head
 to the `headlamp-discovery` ClusterRole and commit. Do **not** reach for
 `cluster-admin`: that is what this design removed, and it would put a full
 cluster-admin token in an internet-facing pod.
+
+### Confirm the group string §8c guessed
+
+That first Headlamp login is the first real token Dex has issued, so it is the
+first chance to check the group string bound to `cluster-admin` in §8c. Dex logs
+the groups it actually emitted:
+
+```bash
+kubectl -n dex logs deploy/dex | grep -i "login successful" | tail -1
+```
+
+Prefix each group with `aks:jwt:` to get the RBAC string, and compare against
+what was bound:
+
+```bash
+kubectl get clusterrolebinding webservices-infra-admin -o jsonpath='{.subjects}'
+```
+
+They must match **exactly** — display name, not slug, spaces included. If they
+differ, delete the binding and recreate it with the string from the log. The
+symptom of a mismatch is not an error: an infra-team member logs in successfully
+and sees nothing.
+
+### Verify the developer kubeconfig
+
+The shared kubeconfig written in §8c could not be tested there — Dex did not
+exist. Now it does, and DNS resolves:
+
+```bash
+kubectl --kubeconfig k8s/access/oidc-kubeconfig get nodes
+```
+
+This opens a browser for GitHub login the first time. Success proves the whole
+developer path: Dex issues the token, the API server's JWTAuthenticator accepts
+its audience, and RBAC grants the access. `Unauthorized` here usually means
+`kubectl` is missing from the JWTAuthenticator's `audiences` (§8b) — run
+`kubectl oidc-login clean` after fixing it, to drop the cached rejected token.
 
 There is deliberately **no ArgoCD endpoint** — see the next section.
 
@@ -1014,4 +1202,3 @@ OAuth** app (§2a).
   on benign Helm/CRD field drift. Pods are Running.
 - **CRD name clash:** both Velero and CloudNativePG define a `backups` CRD — use
   the fully-qualified `backups.velero.io` / `backups.postgresql.cnpg.io`.
-```
