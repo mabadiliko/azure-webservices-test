@@ -13,3 +13,6 @@ metadata:
     pod-security.kubernetes.io/enforce-version: v1.36
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/audit: restricted
+    # Opt in to the shared Key Vault store — this namespace has a database.
+    # Grants the WHOLE vault: docs/security.md §3.
+    scouterna.se/keyvault-access: "true"
