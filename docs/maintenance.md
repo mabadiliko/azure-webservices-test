@@ -24,6 +24,7 @@ Based on each project's real release velocity and blast radius:
 |---|---|---|
 | **Quarterly** (fast-movers) | kube-prometheus-stack, Traefik, ArgoCD, Grafana/Loki/Alloy | Release often; chart-major bumps can change values. Review changelogs. |
 | **Semi-annual** (stable) | cert-manager, MinIO, CloudNativePG, Thanos, Headlamp, External Secrets, Gateway API CRDs | Slower cadence, fewer breaking changes. Bump the Gateway API CRDs in step with Traefik (see below). |
+| **Quarterly** (audit health) | the audit log pipeline | Confirm rows are still arriving and the daily cap has not been hit — `install.md` §11. The Azure alerts catch both faster, but this is the check that does not depend on them. |
 | **AKS Kubernetes** | the cluster | Patch upgrades are automatic (`autoUpgradeProfile: patch` in the Bicep). **Minor** upgrades (1.36→1.37) are manual, ~3×/year following the K8s release train — do them before the running minor goes out of AKS support. |
 
 ## Upgrade-sensitive components (read the changelog first)
@@ -223,6 +224,28 @@ As of the initial build:
 >   moved directly under it) and access logs are now a separate `accessLog:` key.
 
 ---
+
+## Not yet implemented
+
+Controls the design assumes but the cluster does not enforce yet. Distinct from
+[Accepted risks](#accepted-risks-revisit-deliberately) below, which are decisions
+to live with something, and from [decisions.md](decisions.md), which records
+choices already made. These are gaps that should close.
+
+| Gap | What it means today | What closes it |
+|---|---|---|
+| **No record of Key Vault secret reads** — no diagnostic setting on `infra/keyvault.bicep` | The vault is the cluster's root of trust, and `kube-audit-admin` cannot record reads either, so nothing shows which secrets were read or by whom | `Microsoft.Insights/diagnosticSettings` on the vault (`AuditEvent`) to the same workspace |
+| **Alertmanager has no receiver** | Alert rules exist and fire, but nothing leaves the cluster — including the governance alerts above and any future signal that a control has stopped working | A receiver (email/Slack/webhook) and a deliberate route |
+| **No image or manifest scanning in CI** — [`checks.yml`](../.github/workflows/checks.yml) validates YAML, placeholders and two security invariants only; images are pinned by tag, not digest | A compromised or vulnerable upstream tag is adopted on the next pull, silently | Trivy + kube-linter in CI; digest pinning with Renovate keeping digests current |
+
+API-server audit retention is no longer here: `kube-audit-admin` ships to a capped
+Log Analytics workspace ([decisions.md](decisions.md) entry 9). Two caveats keep the
+rows above: it records mutations, **not reads**, and nothing alerts on it — though
+for this workspace the useful alerts are Azure-side and do not wait on Alertmanager.
+
+The Alertmanager gap compounds the other two: several controls fail quietly
+(a stalled `ExternalSecret`, a backup that archives nothing), and until something
+delivers alerts, "it would be noticed" is not true of any of them.
 
 ## Accepted risks (revisit deliberately)
 

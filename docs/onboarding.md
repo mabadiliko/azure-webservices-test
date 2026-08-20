@@ -172,6 +172,14 @@ In both cases: add one RoleBinding **per namespace** the team/developer should
 access (a dev/prod project needs a binding in each), and use ClusterRole `admin`
 (full control within the namespace) or `view` (read-only).
 
+**`roleRef` is immutable.** Changing `admin` to `view` (or back) on an
+**existing** binding and committing it does not do what it looks like it does:
+Kubernetes refuses the update (`cannot change roleRef`), ArgoCD's sync fails and
+retries against the same rejection, and the live binding stays on the old role
+the whole time — silently, since nothing here surfaces a stuck sync as a security
+gap. **Delete the block and re-add it** (same name is fine) rather than editing
+`roleRef` in place; that becomes a delete-then-create, which Kubernetes allows.
+
 **Commit** — ArgoCD creates the RoleBinding(s):
 
 ```bash
@@ -409,8 +417,23 @@ infra:
 
 Anything on that list is an infra request, delivered through
 `k8s/projects/<project>/infra/` in the infra repo — which only infra can commit.
-That is the same boundary as before; it is now enforced by the AppProject rather
-than by infra reviewing every change.
+
+**What enforces it depends on the route.** For your GitOps repo, the AppProject
+does: a sync of an excluded kind is rejected. Deploying by hand goes straight to
+the API server, where the limit is Kubernetes RBAC — `admin` in your namespaces —
+which does not match this table exactly:
+
+- `ExternalSecret` is also blocked by hand: the operator's write permissions are
+  deliberately not folded into `admin` ([security.md](security.md) §3).
+- `RoleBinding`, `Role`, `ServiceAccount` and `Secret` **are** within `admin`, so
+  the API server will accept them in your own namespaces. They stay on this list
+  anyway — creating them by hand is out of bounds and will be reverted, and a
+  `RoleBinding` is the one that could widen *someone else's* access: Kubernetes
+  refuses to grant permissions you do not already hold, so you cannot escalate
+  yourself, but you can hand your level to another person.
+
+If you find yourself able to do something on this list, treat it as a gap to
+report rather than a shortcut.
 
 ## Secrets
 
@@ -619,14 +642,16 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
    at that environment's own database.
 
    **Then grant those namespaces access to the store.** The shared
-   `ClusterSecretStore` refuses namespaces that do not opt in, so add this label
-   to `namespace-<env>.yaml` for **each** environment getting a database:
+   `ClusterSecretStore` refuses namespaces that do not opt in. In
+   `k8s/projects/$PROJECT/infra/`, add this line under `metadata.labels` in
+   `namespace-<env>.yaml`, for **each** environment getting a database:
 
    ```yaml
    scouterna.se/keyvault-access: "true"
    ```
 
    ```bash
+   cd "$(git rev-parse --show-toplevel)/k8s/projects/$PROJECT/infra"
    grep -l 'keyvault-access' namespace-*.yaml    # expect one line per env in $ENVS
    ```
 
