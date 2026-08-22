@@ -19,6 +19,10 @@ say why rather than deleting it.
 | [7](#7-the-vault-has-no-per-key-scoping) | The vault has no per-key scoping | accepted limit |
 | [8](#8-a-namespace-is-a-security-boundary-the-appproject-is-not-the-only-one) | A namespace is a security boundary; the AppProject bounds only GitOps | current |
 | [9](#9-audit-logging-is-kube-audit-admin-only-capped-and-off-cluster) | Audit logging is `kube-audit-admin` only, capped, and off-cluster | current |
+| [10](#10-the-template-declares-the-outbound-ip-counts) | The template declares the outbound IP counts | current |
+| [11](#11-alerts-go-to-slack-and-info-level-is-dropped) | Alerts go to Slack, and info-level is dropped | current |
+| [12](#12-gitops-is-argocd-not-flux) | GitOps is ArgoCD, not Flux | settled |
+| [13](#13-the-default-appproject-is-emptied) | The `default` AppProject is emptied | current |
 
 ---
 
@@ -255,6 +259,13 @@ exist until the cluster's diagnostic setting has created it — and §5b runs be
 the cluster does. It could move into Bicep if the table turns out to be
 pre-configurable; nobody has established that.
 
+**Retention is not retroactive, which makes that step matter more than it looks.**
+Raising retention later does not recover rows that have already aged out — they are
+gone. So the §11 step is not tidying-up to be done eventually: every day it is
+deferred on a running cluster silently spends a day of history the archive was
+supposed to keep. On a rebuild it is durable, since the workspace outlives the
+cluster and the table setting persists with it.
+
 **What this does not give.** Attribution for the local admin certificate is still
 Azure-side only — requests arrive as `masterclient` whatever the audit log records
 (see [cluster-access.md](cluster-access.md)). And **Key Vault reads are not
@@ -262,8 +273,9 @@ audited**: no diagnostic setting exists on the vault, so there is no record of w
 secrets were read from the cluster's root of trust. Given that this category cannot
 record Kubernetes reads either, that is the notable remaining gap — it is the half
 of the original finding this change does not close, and it stays listed in
-[maintenance.md](maintenance.md). **Alerting is Azure-side, not Alertmanager.** In-cluster alerting is still missing
-(see [maintenance.md](maintenance.md)), but this workspace never depended on it:
+[maintenance.md](maintenance.md). **Alerting for this workspace is Azure-side.**
+In-cluster alerting now exists (entry 11), but this workspace never depended on it
+and still should not — these rules must fire when the cluster is the problem:
 `infra/alerts.bicep` carries an action group with an email receiver and two rules,
 deployed outside the cluster so they still fire when the cluster is the problem.
 
@@ -322,6 +334,11 @@ paragraph above, possibly the secrets themselves. Until the query settles that,
 this setting is load-bearing rather than merely conservative, and should not be
 relaxed to `true` for query convenience.
 
+Follow that through when granting access: **treat read on this workspace as read on
+every secret in the cluster**, and hand it out on that basis — the same bar as a
+role on the Key Vault, not the bar for a monitoring dashboard. A year of archived
+rows widens that, not narrows it.
+
 **Why a year and not 30 days.** With no detection in place, an incident will
 surface incidentally — a project reports something odd, a bill looks wrong, a
 credential turns up somewhere — which is routinely months, not weeks. A 30-day
@@ -334,3 +351,171 @@ archive closes both gaps for a small fraction of the ingestion cost.
 Containers especially — would compete for the same 1 GB and could blind the audit
 log as a side effect of adding a security control. Give it its own workspace or
 recalculate the cap first.
+
+## 10. The template declares the outbound IP counts
+
+**Current.** `aks.bicep` sets `networkProfile.loadBalancerProfile.managedOutboundIPs`
+to `count: 1` and `countIPv6: 1`, matching what the cluster is actually running.
+
+**Why it has to be declared.** The cluster is dual-stack, and ARM's default for
+`countIPv6` is **0** — outbound IPv6 is opt-in, unlike `count`, which defaults to
+1. Azure allocated the v6 outbound IP when the cluster was created, but the
+template never mentioned it. An incremental redeploy therefore reset it to the
+default: `what-if` against the live test cluster showed
+`managedOutboundIPs.countIPv6: 1 → 0`, which drops the cluster's IPv6 outbound
+address and IPv6 egress with it, while AAAA records still resolve to the cluster.
+
+**Why that mattered more than it looks.** The redeploy path is routine, not
+exceptional — `aks.bicep`'s own `nodeCount` description calls bumping it and
+redeploying *the* way to add a node (autoscaling is deliberately off), and
+enabling the audit diagnostic setting on an existing cluster needs the same
+redeploy. So the trap sat on the ordinary
+scaling path, and would have been discovered as broken IPv6 egress some time after
+an unrelated change.
+
+**The general rule this is an instance of.** *A property Azure defaults and the
+template does not declare is not stable — it is whatever the last write said.*
+`what-if` is what surfaces it, and only against a **live** cluster; `bicep build`
+cannot, since nothing is syntactically wrong. Worth running before any redeploy of
+an existing cluster, and worth reading past the noise: read-only computed fields
+like `effectiveOutboundIPs` always show as `Delete` and mean nothing, while a
+`Modify` with a concrete before/after is real.
+
+**Not addressed here:** the other properties in the same `what-if` output
+(`nodeResourceGroup`, `storageProfile`, `windowsProfile`, `identityProfile` and
+similar) also appear as `Delete`. Those are Azure-defaulted and left alone by an
+incremental deploy — verified by the same what-if run, which reported no change to
+them once `countIPv6` was declared. If a future what-if shows one of them as a
+`Modify`, treat it the way this one was treated.
+
+## 11. Alerts go to Slack, and info-level is dropped
+
+**Current.** Alertmanager posts to `#webservices-alerts` via a Slack webhook. The
+webhook URL comes from Key Vault through an `ExternalSecret` and is read with
+`slack_api_url_file`, so it never appears in the values file or in the rendered
+config Secret.
+
+**Why there was nothing before.** The chart's default config routes every alert to
+a receiver named `"null"`. With 155 chart-shipped rules plus the governance ones,
+roughly 158 alert rules were firing into it — the platform looked instrumented and
+delivered nothing.
+
+**`info` is dropped, deliberately.** On a single-node cluster the info-level rules
+are mostly steady-state noise, and the fastest way to make a new alerting channel
+useless is to fill it on day one. `critical` gets its own route with a 1h repeat;
+`warning` groups on the 12h default. `Watchdog` goes to `"null"` — it fires
+constantly by design and only matters if you are checking that the pipeline itself
+works. Raising `info` back up is a one-line change once the channel is quiet.
+
+**Setting `config` replaces the chart default wholesale**, so the four inhibit
+rules are carried over by hand rather than inherited. They are what stops one
+critical alert dragging its warning and info siblings along. Dropping them would
+not error — it would just get noisy.
+
+## What the rules actually watch
+
+A receiver alone would have delivered 155 generic Kubernetes alerts and still
+nothing about this platform's own controls, all of which fail quietly:
+`governance/platform-health.yaml` adds five rules for exactly those.
+
+| Alert | The quiet failure it catches |
+|---|---|
+| `ExternalSecretNotReady` | The Secret keeps serving its last synced value, so the workload runs fine until a rotation or rebuild |
+| `VeleroBackupFailing` | Backups erroring; only matters when a restore is needed |
+| `VeleroNoRecentBackup` | Worse — not failing, just not running |
+| `PostgresWALArchivingFailing` | The database serves queries perfectly while archiving nothing |
+| `ArgoCDAppNotSynced` | GitOps stopped converging, so every control in this repo quietly stops being enforced |
+
+**Metric names were cross-checked against the committed dashboards**, not written
+from memory. That caught one: the archiver metric is `cnpg_pg_stat_archiver_*`, not
+`cnpg_collector_pg_stat_archiver_*` — a plausible-looking name that would never
+match, giving a rule that looks healthy and never fires.
+
+`argocd_app_info` is the exception with no corroboration in the repo, because
+**ArgoCD was not being scraped at all** — it ships metrics Services and no
+ServiceMonitor, so `governance/servicemonitor-argocd.yaml` adds one. Confirm that
+rule has a target before trusting it (install.md §11).
+## 12. GitOps is ArgoCD, not Flux
+
+**Settled.** Evaluated on 2026-08-12 and re-checked on 2026-08-22 against the
+running cluster. Flux is a good tool; it is not the right one for *this* design.
+**Why.** The multi-tenancy model is the whole argument. An `AppProject` expresses,
+in one file a reviewer reads top to bottom, that a project may deploy **only these
+kinds**, **only into its own namespaces**, **only from its own repo** — and names
+the escalation paths it excludes. That file is labelled the security boundary
+because it is: projects run their own GitOps repos that nobody on the infra side
+reviews, so the whitelist is the only thing between a commit in their repo and the
+cluster.
+
+Flux isolates differently: a `Kustomization` impersonates a ServiceAccount and
+RBAC does the rest. Reaching the same result means per-project ServiceAccounts and
+Roles enumerating allowed verbs and kinds, and depending on
+`spec.serviceAccountName` being set correctly on every `Kustomization`. Two
+consequences:
+
+- **Kind allowlisting through RBAC is scattered and easier to get subtly wrong.**
+  "No `ExternalSecret`, no `SealedSecret`, no `RoleBinding`" stops being one
+  reviewable list.
+- **The source-repo restriction largely disappears.** RBAC constrains *what* is
+  applied, not *where it came from*. The `sourceRepos` pin has no Flux
+  counterpart; you would rely on only infra committing the `GitRepository`.
+
+That second point is the sharper one, and worth conceding openly if challenged:
+this design deliberately keeps repo-origin and applied-kinds as two independent
+controls, and Flux collapses them into one.
+
+The same reasoning covers `project-infra`, the privileged lane, whose own comment
+warns that its RoleBinding + `namespace: '*'` combination is the escalation path
+in this cluster. Under Flux both lanes are `Kustomization` objects separated only
+by which ServiceAccount they impersonate — a less legible separation for exactly
+the object that can mint RoleBindings anywhere.
+
+**Where Flux would have been fine or better**, stated because conceding it
+strengthens the rest:
+
+- **ApplicationSet is genuinely awkward.** `gitops-appset.yaml` needs a matrix
+  generator, `elementsYaml` and a `templatePatch` purely because
+  `syncPolicy.automated` is presence-based and cannot be conditionally templated.
+  Flux's per-project `Kustomization` files would be plainer, at the cost of one
+  file per project-environment instead of one generator.
+- **Helm handling.** Flux's `HelmRelease` performs a real `helm install/upgrade`;
+  ArgoCD renders and applies. The handover story in
+  [argocd.md](argocd.md) — capture hand edits with `helm get values` — would be
+  slightly more natural under Flux.
+
+**One argument that has since reversed.** The 2026-08-12 assessment noted that
+running ArgoCD with no GUI forfeits its main advantage. That changed when project
+teams asked to see their own sync status: ArgoCD has a first-party UI that
+integrates with the existing Dex, and Flux has none (Weave GitOps is third-party
+and lost its corporate backing). What was a point against ArgoCD is now a point
+for it.
+
+**Migration cost, if it is ever asked.** `Application` and `ApplicationSet`
+objects would be mechanical to convert. The `AppProject`s would need a from-scratch
+RBAC redesign. Stating that plainly is better than claiming there is no lock-in.
+
+## 13. The `default` AppProject is emptied
+
+**Current.** `k8s/argocd/projects/default.yaml` overrides ArgoCD's built-in
+`default` project with empty `sourceRepos`, `destinations`,
+`clusterResourceWhitelist` and `namespaceResourceWhitelist`.
+
+**Why.** ArgoCD creates `default` at startup permitting **any repo, any
+namespace, and every cluster-scoped kind**, and it *cannot be deleted* — upstream
+documents that it may be modified but not removed, and recommends emptying it in
+multi-tenant setups. Left alone it is a fully permissive project sitting beside
+the AppProject whitelist that entry 12 identifies as the entire security boundary.
+
+**It was not a live escalation when this was written**, and the entry records that
+so a future reader does not over-read it: no Application referenced `default` (23
+on `infra`, 2 on `project-infra`), and project developers cannot create
+Applications at all — verified by impersonation. The point is that "nobody uses
+it" is a weaker guarantee than "it cannot be used", and the cost of the stronger
+one is a nine-line file.
+
+**Consequence, by design.** Any Application that omits `spec.project`, or names
+`default` explicitly, now fails to sync instead of deploying with unrestricted
+permissions. That is the intended behaviour: project assignment becomes
+deliberate. An Application that suddenly cannot sync after this lands is telling
+you it never named a project.
+
