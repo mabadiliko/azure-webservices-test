@@ -57,6 +57,9 @@ spec:
   # 1 while the cluster is single-node: a second replica lands on the same node,
   # so it is not real HA, and it costs one of the node's 12 attachable-disk slots
   # (the binding limit here — see docs/postgres.md). Raise to 2 with a 2nd node.
+  # At instances: 1 the PDB is unsatisfiable and blocks every node drain.
+  # docs/decisions.md entry 16.
+  enablePDB: false
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:17
   storage:
