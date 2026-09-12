@@ -60,10 +60,13 @@ FEDCRED_ESO=eso-$CLUSTER              # ESO federated-credential name (one per c
 FEDCRED_VELERO=velero-$CLUSTER        # Velero federated-credential name (one per cluster)
 
 # --- DNS / access ---
-HOST=wsv2test.j26.se        # DNS suffix for the infra apps (Grafana, Headlamp, ...)
+# DNS suffix for the infra apps: grafana.$HOST, headlamp.$HOST, dex.$HOST.
+# Reaches the manifests as the <HOST> placeholder, filled in §9a. Setting it here
+# is enough — nothing downstream needs editing by hand.
+HOST=test.ws.scouterna.net
 
 # --- Subscription (set EXPLICITLY — see the warning below) ---
-SUBSCRIPTION_ID=<the-target-subscription-id>
+SUBSCRIPTION_ID=f1831dd3-3713-42ed-997f-d538ecdd960c
 az account set --subscription "$SUBSCRIPTION_ID"
 ```
 
@@ -604,21 +607,25 @@ az feature show --namespace Microsoft.ContainerService --name JWTAuthenticatorPr
 az provider register --namespace Microsoft.ContainerService            # after it shows Registered
 ```
 
-`infra/jwtauthenticator/dex.json` carries the claim mappings. **Its `issuer.url`
-is the one place `$HOST` is hardcoded** rather than substituted — everything else
-in this runbook derives from the variable, so this file is the one that silently
-points at the wrong cluster after a copy. Assert it, and rewrite it if it does not
-match:
+`infra/jwtauthenticator/dex.json` carries the claim mappings. It holds a `<HOST>`
+placeholder like the manifests, but it is the **one placeholder `--expect-filled`
+cannot see**: the checker only scans YAML under `k8s/`, and this file is JSON
+under `infra/`. It is also needed *here*, before §9 fills the rest. So this step
+fills and asserts it on its own. A wrong issuer here is the classic silent
+failure — nothing rejects it, and every login fails token validation later.
 
 ```bash
-# Fails loudly if the issuer does not match this cluster's $HOST.
-grep -q "\"url\": \"https://dex.$HOST\"" infra/jwtauthenticator/dex.json \
+# Fill it. Matches both the <HOST> placeholder and an already-filled hostname,
+# so this is safe to re-run and safe on a copied tree.
+sed -i "s#\"url\": \"https://dex\.[^\"]*\"#\"url\": \"https://dex.$HOST\"#" \
+  infra/jwtauthenticator/dex.json
+
+# Then assert. -F: $HOST contains dots, which are regex wildcards unquoted.
+grep -qF "\"url\": \"https://dex.$HOST\"" infra/jwtauthenticator/dex.json \
   && echo "issuer OK: https://dex.$HOST" \
   || echo "MISMATCH — currently: $(grep -o 'https://dex\.[^"]*' infra/jwtauthenticator/dex.json)"
 
-# If it mismatched, point it at this cluster (then commit the change):
-sed -i "s#\"url\": \"https://dex\.[^\"]*\"#\"url\": \"https://dex.$HOST\"#" \
-  infra/jwtauthenticator/dex.json
+# Commit the filled file with the rest at §9 — it is part of the install branch.
 
 az aks jwtauthenticator add -g $CLUSTER_RG --cluster-name $CLUSTER \
   --name dex --config-file infra/jwtauthenticator/dex.json
@@ -734,8 +741,34 @@ through the normal onboarding flow (see [onboarding.md](onboarding.md) section B
 
 ## 9. Fill the manifest placeholders, then commit + push
 
-Gather the remaining values, then fill the `<...>` placeholders in the manifests.
-These are Azure identifiers, not secrets — safe to commit.
+Fill the `<...>` placeholders in the manifests. These are hostnames and Azure
+identifiers, not secrets — safe to commit.
+
+### 9a. `<HOST>` and `<CLUSTER>` — fill these mechanically
+
+Both are already set from §0, so neither needs a lookup and neither should be
+edited by hand: `<HOST>` alone appears 13 times across four files.
+
+```bash
+# Every occurrence, in one pass. Run from the repo root.
+grep -rlZ -e '<HOST>' -e '<CLUSTER>' k8s/ \
+  | xargs -0 sed -i -e "s#<HOST>#$HOST#g" -e "s#<CLUSTER>#$CLUSTER#g"
+
+git diff --stat    # expect: dex, headlamp x2, kube-prometheus-stack, alloy
+```
+
+`<HOST>` becomes the ingress host, the TLS host, Grafana's `root_url`, Dex's
+issuer and both OIDC callback URLs. `<CLUSTER>` becomes the Loki `cluster` label
+in **both** Alloy pipelines — pod logs and Kubernetes events. The one `<HOST>`
+this misses is `infra/jwtauthenticator/dex.json`, which §8b already filled.
+
+> These two were committed literals until 2026-09-12. A copy of the repo then
+> served the *original* cluster's hostnames while its operator pointed DNS and
+> certificates at a different one: certificates fail HTTP-01, every URL 404s, and
+> Dex issues tokens under an issuer nothing validates against. The runbook also
+> claimed the hostname derived from `$HOST`, and it did not.
+
+### 9b. The rest — read back from Azure, then edit
 
 ```bash
 # Read the three values only the running cluster / identities can give us.
@@ -772,12 +805,10 @@ Every placeholder is named for exactly one variable, so the rule is always
 > OAuth apps** — mixing them up breaks that login. That is why neither is called
 > just `GITHUB_CLIENT_ID`.
 
-> **Deploying under a different `$CLUSTER` name?** `alloy-values.yaml` hardcodes
-> the Loki `cluster` label as `webservices-v2-test` in **two** places (pod logs
-> and Kubernetes events). It is a plain Helm values file with no templating, so
-> it cannot pick the name up automatically. Change both or neither — a mismatch
-> silently splits logs and events across two `cluster` values, and event panels
-> read as empty rather than erroring.
+> **Alloy's two `cluster` labels must agree**, and §9a is what makes them. If you
+> ever edit them by hand instead, change both or neither: a mismatch silently
+> splits logs and events across two `cluster` values, and the event panels in
+> Grafana read as empty rather than erroring.
 
 > **Velero's two `resourceGroup` values are different on purpose** (row 4): the
 > backup storage location takes `$BACKUP_STORAGE_ACCOUNT`'s resource group
@@ -795,19 +826,23 @@ an unpushed edit has no effect. Push before applying the root app (§10), and ag
 whenever you change a filled-in value later:
 
 ```bash
-# Stage exactly the six files from the table above — never `git add -A`/`-u`,
-# which would sweep up anything else you happen to have modified.
+# Stage exactly the files 9a and 9b touched — never `git add -A`/`-u`, which
+# would sweep up anything else you happen to have modified.
 git add k8s/argocd/infra-apps/external-secrets.yaml \
         k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml \
         k8s/infra-manifest/dex/values.yaml \
         k8s/argocd/infra-apps/velero.yaml \
         k8s/infra-manifest/external-secrets/clustersecretstore.yaml \
-        k8s/infra-manifest/postgres/cluster.yaml
+        k8s/infra-manifest/postgres/cluster.yaml \
+        k8s/infra-manifest/headlamp/deployment.yaml \
+        k8s/infra-manifest/headlamp/ingress.yaml \
+        k8s/infra-manifest/monitoring/alloy-values.yaml \
+        infra/jwtauthenticator/dex.json
 
 git diff --cached          # review: only the placeholders you filled should appear
 git status --short         # anything still unstaged is intentionally left out
 
-git commit -m "Fill infra client-ids / vault URL"
+git commit -m "Fill infra hostnames / client-ids / vault URL"
 git push
 ```
 

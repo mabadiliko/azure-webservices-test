@@ -40,6 +40,9 @@ get per-namespace `RoleBinding`s on their individual `aks:jwt:<login>` user.
 
 ## Per-host note
 
-`issuer.url` and the host are environment-specific. The test cluster uses
-`https://dex.wsv2test.j26.se`; the real cluster will use its own Dex host —
-update `dex.json` accordingly when porting.
+`issuer.url` is environment-specific, so the committed file carries
+`https://dex.<HOST>` and §8b of `docs/install.md` fills it from `$HOST` before
+registering the authenticator. Nothing needs editing when porting — set `$HOST`.
+
+This is the one `<HOST>` that `scripts/check-placeholders.sh` cannot see: it
+scans YAML under `k8s/`, and this is JSON under `infra/`. §8b asserts it instead.

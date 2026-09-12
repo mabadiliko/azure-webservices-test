@@ -1,6 +1,6 @@
 {
   "issuer": {
-    "url": "https://dex.wsv2test.j26.se",
+    "url": "https://dex.<HOST>",
     "audiences": ["headlamp", "kubectl"]
   },
   "claimValidationRules": [

@@ -9,7 +9,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: headlamp.wsv2test.j26.se
+    - host: headlamp.<HOST>
       http:
         paths:
           - path: /
@@ -22,4 +22,4 @@ spec:
   tls:
     - secretName: headlamp-tls
       hosts:
-        - headlamp.wsv2test.j26.se
+        - headlamp.<HOST>
