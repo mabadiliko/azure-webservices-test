@@ -27,9 +27,9 @@ Access is granted by **committing a RoleBinding**, not by running `kubectl`:
 ## Cluster context
 
 - Cluster: `webservices-v2` (Azure AKS, swedencentral)
-- Kubernetes UI: https://headlamp.wsinfra.scouterna.net (GitHub SSO)
+- Kubernetes UI: https://headlamp.wsv2test.j26.se (GitHub SSO)
 - Ingress: Traefik (class `traefik`); TLS via cert-manager `letsencrypt-prod`
-- DNS: `*.wsinfra.scouterna.net` → the Traefik LoadBalancer (managed externally)
+- DNS: `*.wsv2test.j26.se` → the Traefik LoadBalancer (managed externally)
 
 ## What to ask before starting
 

@@ -49,11 +49,12 @@ if [[ -n "$CACHED" && -n "$REF" ]]; then
 fi
 PATTERN='<[A-Z][A-Z0-9_]*>'
 
-# The nine placeholders §9 fills, as "file:PLACEHOLDER". Kept explicit so that
+# The twelve placeholders §9 fills, as "file:PLACEHOLDER". Kept explicit so that
 # DELETING one is a failure too, not just replacing it with a real value.
 EXPECTED=$(cat <<'EOF'
 k8s/argocd/infra-apps/external-secrets.yaml:<ESO_CLIENT_ID>
 k8s/argocd/infra-apps/velero.yaml:<BACKUP_STORAGE_ACCOUNT>
+k8s/argocd/infra-apps/velero.yaml:<INFRA_RG>
 k8s/argocd/infra-apps/velero.yaml:<NODE_RESOURCE_GROUP>
 k8s/argocd/infra-apps/velero.yaml:<SUBSCRIPTION_ID>
 k8s/argocd/infra-apps/velero.yaml:<SUBSCRIPTION_ID>
@@ -61,6 +62,8 @@ k8s/argocd/infra-apps/velero.yaml:<VELERO_CLIENT_ID>
 k8s/infra-manifest/dex/values.yaml:<DEX_GITHUB_CLIENT_ID>
 k8s/infra-manifest/external-secrets/clustersecretstore.yaml:<KEY_VAULT_NAME>
 k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml:<GRAFANA_GITHUB_CLIENT_ID>
+k8s/infra-manifest/postgres/cluster.yaml:<BACKUP_STORAGE_ACCOUNT>
+k8s/infra-manifest/postgres/cluster.yaml:<BACKUP_STORAGE_ACCOUNT>
 EOF
 )
 
@@ -94,7 +97,11 @@ fi
 # matches k8s yaml at EVERY depth — including direct children of k8s/, which
 # 'k8s/**/*.yaml' (requiring two path separators) silently missed.
 scan() {
+  # The vendored barman-cloud-plugin release manifest is upstream content, not
+  # one of this repo's templates. Its CRD carries a literal <KEY> in a field
+  # description, which would otherwise read as an unfilled placeholder.
   git grep -z -nI $CACHED -E "$PATTERN" ${REF:+"$REF"} -- 'k8s/*.yaml' 'k8s/*.yml' \
+    ':!k8s/infra-manifest/barman-cloud-plugin/manifest.yaml' \
   | awk -v RS='\n' -v strip="$strip" '
     {
       n = index($0, "\0"); if (n == 0) next
@@ -145,7 +152,7 @@ fi
 found=$(printf '%s\n' "$scanned" | sed -n $'s/^PH\t//p' | sort)
 
 if diff <(printf '%s\n' "$EXPECTED" | sort) <(printf '%s\n' "$found") >/dev/null; then
-  echo "check-placeholders: template intact in ${SCOPE} (9 placeholders)."
+  echo "check-placeholders: template intact in ${SCOPE} (12 placeholders)."
   exit 0
 fi
 

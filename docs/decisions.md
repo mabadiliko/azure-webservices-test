@@ -23,6 +23,13 @@ say why rather than deleting it.
 | [11](#11-alerts-go-to-slack-and-info-level-is-dropped) | Alerts go to Slack, and info-level is dropped | current |
 | [12](#12-gitops-is-argocd-not-flux) | GitOps is ArgoCD, not Flux | settled |
 | [13](#13-the-default-appproject-is-emptied) | The `default` AppProject is emptied | current |
+| [14](#14-projects-read-their-own-argocd-status-via-kubernetes-rbac-not-an-argocd-ui) | Projects read their own ArgoCD status via RBAC, not an ArgoCD UI | current |
+| [15](#15-the-node-pool-is-pinned-to-one-availability-zone) | The node pool is pinned to one availability zone | current |
+| [16](#16-node-image-upgrades-stay-automatic-and-the-shared-postgres-has-no-pdb) | Node-image upgrades stay automatic; the shared Postgres has no PDB | current |
+| [17](#17-the-telemetry-store-is-named-for-its-job-and-minio-is-reserved) | The telemetry store is named for its job, and "MinIO" is reserved | current |
+| [18](#18-persistent-state-has-four-tiers-and-a-disk-is-the-last-one) | Persistent state has four tiers, and a disk is the last one | current |
+| [19](#19-metric-retention-is-sized-from-a-measured-rate-and-0-is-not-unlimited) | Metric retention is sized from a measured rate, and `0` is not unlimited | current |
+| [20](#20-a-test-cluster-that-outlives-its-install-gets-its-own-durable-resources) | A test cluster that outlives its install gets its own durable resources | current |
 
 ---
 
@@ -302,10 +309,10 @@ months rather than minutes.
 object from the request in object format" — and a `Level` column whose values
 include `RequestResponse`. This category records `create`, `update` and `patch`,
 which are exactly the verbs External Secrets uses to materialise a Secret. If AKS
-populates those columns for `secrets`, then the Sealed Secrets private key, MinIO's
-root credentials and every project's PostgreSQL password are in this workspace in
-plaintext — base64 is an encoding, not encryption — and read access to it is
-equivalent to read access to every secret in the cluster.
+populates those columns for `secrets`, then the Sealed Secrets private key, the
+telemetry store's root credentials and every project's PostgreSQL password are in
+this workspace in plaintext — base64 is an encoding, not encryption — and read
+access to it is equivalent to read access to every secret in the cluster.
 
 **Whether it actually does is unverified**, and deliberately recorded as open
 rather than assumed either way. The columns and the audit level are documented;
@@ -431,10 +438,66 @@ from memory. That caught one: the archiver metric is `cnpg_pg_stat_archiver_*`, 
 `cnpg_collector_pg_stat_archiver_*` — a plausible-looking name that would never
 match, giving a rule that looks healthy and never fires.
 
+**A rule goes silent when its exporter does, and that is not obvious.** Every rule
+above needs its series to *exist*: `== 1`, `increase()` and `time() - metric` all
+return nothing when the metric is absent, so the alert cannot fire at the moment the
+component it watches disappears. `VeleroNoRecentBackup` was the clearest case —
+Velero uninstalled, crashed, or never having completed a backup all produced no
+series and therefore no alert.
+
+The chart's `TargetDown` is the generic net, but it is `warning`-severity, needs
+more than 10% of a job's targets down, and cannot fire at all if the ServiceMonitor
+itself is gone. So the two cases where *absence is itself the failure* get an
+explicit companion:
+
+- **`VeleroBackupMetricsAbsent`** — `absent_over_time(...[48h])`. It fires on a
+  fresh cluster until the first 02:00 run, which is correct rather than a false
+  positive: no backup has succeeded, so backup alerting really is blind. The
+  window covers a series that existed and vanished; a series that has **never**
+  existed is reported from the first evaluation, so only `for:` delays anything.
+  Sizing `for:` to cover install-to-first-backup would be ~26h, which would also
+  delay a real Velero outage by 26h — not worth it.
+- **`ArgoCDMetricsAbsent`** — the more useful of the two, because it also catches
+  the scrape breaking rather than ArgoCD breaking. That ServiceMonitor selects on
+  labels the *upstream* ArgoCD manifest owns, which can change on an upgrade.
+
+**`VeleroBackupMetricsAbsent` stays `critical`, but does not repeat hourly.** It
+fires on every fresh install, which is correct — no backup has succeeded, so the
+backup path really is blind — but the `critical` route repeats every hour, so a
+worst-case install-to-first-backup window would have produced around 26 Slack posts
+for an expected condition. That is how a channel gets muted, and a muted channel
+looks exactly like coverage.
+
+Downgrading to `warning` was the alternative and was rejected: on a cluster that has
+been up for weeks, a blind backup path is not a warning, and there is no other
+signal for it. So the severity stays honest and the *notification* is what changes —
+an explicit route ahead of the critical one gives both absence alerts a 12h repeat.
+
+The distinction that justifies it: these describe a **standing condition**, not an
+incident. Hourly re-notification tells you nothing new whether the cause is an
+install an hour old or an outage a month old. Anything else `critical` keeps the 1h
+repeat.
+
+Read these as "the rule above has gone blind", not as the underlying fault. They
+deliberately do not suppress their siblings: the chart's inhibit rules match on
+`alertname`, so a firing `VeleroBackupMetricsAbsent` still lets
+`VeleroBackupFailing` through if it can fire at all.
+
+**ESO and CNPG deliberately do not get one.** Their failures surface elsewhere — a
+workload breaks on the next rotation, and `TargetDown` covers the endpoint — so a
+companion each would add noise for little signal. The CNPG case is the weaker
+argument of the two: archiving could fail while the exporter is also down. The
+better fix there is a staleness rule on
+`cnpg_pg_stat_archiver_seconds_since_last_archival` (a metric the dashboards
+already use), which detects the actual bad state rather than the monitoring gap —
+but it needs to know whether `archive_timeout` is set, or an idle database will
+false-alarm. Left open rather than guessed.
+
 `argocd_app_info` is the exception with no corroboration in the repo, because
 **ArgoCD was not being scraped at all** — it ships metrics Services and no
 ServiceMonitor, so `governance/servicemonitor-argocd.yaml` adds one. Confirm that
 rule has a target before trusting it (install.md §11).
+
 ## 12. GitOps is ArgoCD, not Flux
 
 **Settled.** Evaluated on 2026-08-12 and re-checked on 2026-08-22 against the
@@ -519,3 +582,488 @@ permissions. That is the intended behaviour: project assignment becomes
 deliberate. An Application that suddenly cannot sync after this lands is telling
 you it never named a project.
 
+
+## 14. Projects read their own ArgoCD status via Kubernetes RBAC, not an ArgoCD UI
+
+**Current.** A project that wants to see whether ArgoCD is syncing its manifests
+gets a `Role` in the `argocd` namespace scoped with `resourceNames` to its own
+`Application` objects, bound to its GitHub team. There is no ArgoCD web UI, and
+`argocd-server` is not exposed. The template is
+`k8s/projects/_template/infra/argocd-status-rbac.yaml.example`; it is opt-in, and
+a project without it sees nothing in `argocd` at all.
+
+**Why this and not the UI.** Projects could already see the *effects* of a sync —
+Deployments, Pods and Events in their own namespaces, through Headlamp. What they
+could not see is a sync that is **failing**, which is the case that matters: a
+stalled sync looks exactly like "nothing has happened yet". Verified by
+impersonation before this landed: a project developer got `no` for `get`, `list`
+and `watch` on `applications.argoproj.io`.
+
+Exposing the ArgoCD UI behind Dex would also answer it, and `install.md` had
+always left that door open. It was not taken because it costs a new public
+endpoint, a second authorisation model (`argocd-rbac-cm`, currently empty, with
+an unrestricted break-glass `admin` account) and per-project RBAC lines that must
+be generated during onboarding or silently drift. The RBAC route reuses the
+identity and the tool projects already have.
+
+**The limitation, stated plainly: `kubectl get app -n argocd` is Forbidden.**
+Kubernetes RBAC cannot filter a collection, so `resourceNames` does not restrict
+`list` — it only permits `get` on named objects. A developer must therefore name
+the Application:
+
+```
+kubectl get app -n argocd project-infra-<project> \
+  -o custom-columns='SYNC:.status.sync.status,HEALTH:.status.health.status'
+```
+
+The alternative was granting unscoped `list`, which would expose every project's
+Application to every project. A label selector does not help — the filtering is
+client-side and the request is refused before it. The same applies in Headlamp,
+which lists resources: the Application will not appear in a list view.
+
+**Consequence.** `project-infra` gains `Role` in its
+`namespaceResourceWhitelist`, alongside the `RoleBinding` it already had. That
+widens the cluster's most privileged AppProject by one kind, which is why the
+Role is written per project with explicit `resourceNames` rather than as a shared
+ClusterRole: a Role grants no more than the verbs written in it, and only inside
+its own namespace. Verbs are `get` and `watch` only — not `patch`, not `delete`,
+so a project cannot trigger or abort its own sync. Confirmed by impersonation,
+including that another project's team is refused.
+
+**Revisit if** projects ask for the diff view or a self-service sync button.
+Those are real arguments for the UI, and the per-project `resourceNames` work
+done here is not wasted if it is built.
+
+## 15. The node pool is pinned to one availability zone
+
+**Current.** `infra/aks.bicep` sets `zones: ['1']`. The pool was previously
+`['1','2','3']`.
+
+**Why.** Azure managed disks **cannot cross availability zones**. A multi-zone
+pool spreads nodes, so a replacement node can land in a different zone from the
+one holding the cluster's disks — and every pod with a PVC then becomes
+permanently unschedulable, not transiently. `WaitForFirstConsumer` on the
+StorageClass is correct and does not prevent this: it places each disk in
+whatever zone its pod first landed in, which is right at creation time and
+useless once that node is gone.
+
+**Found the hard way, 2026-08-24.** A node-image upgrade replaced the single
+zone-1 node with a zone-2 node. All six existing disks (telemetry store, Loki,
+Grafana, Prometheus, Alertmanager, the Postgres primary) stayed pinned to zone 1,
+and their pods sat `Pending` with *"node(s) didn't match PersistentVolume's node
+affinity"* until a second node was added back in zone 1. **Scaling *up* is safe;
+scaling *down* is destructive**, because Azure chooses which node to remove and
+it may be the one whose zone holds the data.
+
+**What is given up.** Nothing that exists today. Zonal redundancy needs more than
+one node to mean anything, so a multi-zone pool on a single-node cluster buys
+fragility without buying availability. Revisit when the node count grows enough
+for zonal HA to be real — and note that at that point stateful workloads need to
+be zone-aware or replicated regardless, because the disk constraint does not go
+away.
+
+**Which zone does not matter.** `D4s_v6` is offered in all three zones in
+`swedencentral` with no restrictions, and pricing is identical. Zone `1` was
+chosen only because the cluster's existing disks are already there.
+
+⚠️ **Logical zone numbers are per-subscription aliases, not physical
+datacentres.** For this subscription:
+
+| Logical (Bicep, `kubectl`) | Physical (Azure status page) |
+|---|---|
+| 1 | `swedencentral-az3` |
+| 2 | `swedencentral-az1` |
+| 3 | `swedencentral-az2` |
+
+This matters when reading an Azure outage notice, which reports **physical**
+zones: a reported problem in `az3` is *this cluster's* zone 1. It would also
+matter if resources were ever split across subscriptions — matching zone numbers
+would not co-locate them. Re-read the live mapping with
+`az rest --method get --uri ".../locations?api-version=2022-12-01"` and look at
+`availabilityZoneMappings`.
+
+## 16. Node-image upgrades stay automatic, and the shared Postgres has no PDB
+
+**Current.** `nodeOSUpgradeChannel: 'NodeImage'` in `infra/aks.bicep`, and
+`enablePDB: false` on the shared CloudNativePG cluster.
+
+**Why automatic, having been burned by it.** On 2026-08-24 an automatic
+node-image upgrade left the test cluster's pool in `provisioningState: Failed`,
+billing two nodes, and appeared to break SSO. Moving to a manual channel was
+implemented and then **rejected**: this platform is maintained by volunteers,
+node images ship roughly weekly carrying OS CVE fixes, and a manual step that is
+forgotten is worse than an automatic one that occasionally disrupts. **The right
+response was to make the disruption survivable, not to move it into a runbook
+nobody runs.**
+
+**Why the drain wedged, and why the PDB goes.** CNPG creates a
+`PodDisruptionBudget` selecting `cnpg.io/instanceRole: primary` — it protects
+whichever pod is currently primary, always exactly one. At `instances: 1` that
+makes `disruptionsAllowed` permanently `0`: **no eviction is ever allowed, and
+every node drain blocks forever.** AKS retries rather than forcing, emitting
+`Eviction blocked by Too Many Requests (usually a pdb): shared-1` — 67 times over
+7 minutes in a controlled reproduction. Setting `enablePDB: false` unblocked the
+stuck deletion immediately.
+
+Nothing real is given up. A PDB exists to stop Kubernetes evicting the primary
+while a replica catches up; with one instance there is no replica, so the
+guarantee was already vacuous — it blocked drains without protecting anything.
+Postgres still shuts down gracefully (`terminationGracePeriodSeconds: 1800`),
+which is what AKS waits for. Upstream CNPG documents `enablePDB: false` as
+advisable for non-production clusters.
+
+**`instances: 2` is the alternative fix, not a complement.** It also makes the
+PDB satisfiable, and adds real availability — at the cost of a second attached
+disk (one of ~6 remaining) and 1Gi more reserved memory. Measured on the test
+cluster: actual usage was ~8m CPU and 217Mi per instance, so the cost is the disk
+slot rather than compute. Revisit when the node count or the availability
+requirement grows.
+
+**This decision depends on [entry 15](#15-the-node-pool-is-pinned-to-one-availability-zone).** Automatic upgrades are only
+survivable because the pool is pinned to one zone; a replacement node in another
+zone strands every disk-bound workload permanently, and no PDB setting helps.
+
+**Dex keeps its signing keys, so an upgrade no longer logs everyone out.** With
+the previous `storage: type: memory`, every Dex restart generated a new signing
+key and **invalidated every issued token** — and the resulting `401` was
+indistinguishable from a broken authenticator, which produced two wrong
+diagnoses. `storage: type: kubernetes` persists the keys as custom resources in
+etcd. Verified on the test cluster: the JWKS `kid` was identical across a full
+`rollout restart`.
+
+It costs **no PVC and no attached disk** — the store is etcd, reached through the
+API server. The chart already shipped the ServiceAccount, the ClusterRole
+(`create` on `customresourcedefinitions`) and the namespace Role
+(`dex.coreos.com/*`); those permissions were simply unused. Dex creates its own
+ten CRDs at startup.
+
+**What it puts in etcd.** Refresh tokens become `refreshtokens.dex.coreos.com`
+objects in the `dex` namespace — real credentials in cluster state. Only the Dex
+ServiceAccount can read them; a project developer gets `no` (verified by
+impersonation), since project `admin` does not reach the `dex` namespace. It also
+makes a second Dex replica possible for the first time, because both would share
+auth-code state — not done here, but no longer blocked.
+
+**When a `401` still happens**, compare the token's `kid` against Dex's live JWKS
+before suspecting anything else ([maintenance.md](maintenance.md)). Keys now
+survive restarts, but a token older than a key *rotation* still fails, and that
+check distinguishes it from a real fault in seconds.
+
+## 17. The telemetry store is named for its job, and "MinIO" is reserved
+
+**Current.** The `telemetry-store` namespace holds an object store that exists to
+give Loki and Thanos the S3-compatible API they require, and holds only the `loki`
+and `thanos` buckets. It is not offered to projects.
+
+**It runs MinIO, but it is not called MinIO — and that is the point.** People read
+"there is MinIO in the cluster" as "there is S3 storage I can use", and they are
+right to: naming a service after its software is an offer of that software.
+Stating the scope next to the name did not prevent the misreading: the name is
+read, the sentence after it is skimmed. So the service is named for its *job*
+instead, and the name **MinIO is deliberately kept free** for a project-facing
+object store, to be built when a project first needs one — see *Revisit when*
+below. The software is still MinIO and the charts, images and upstream labels
+still say so; what changed is that the platform no longer *offers* something
+called MinIO that nobody may use.
+
+**A project-facing object store will simply be called `minio`** — the same way the
+shared database is called PostgreSQL rather than something abstract. A product
+name is the right name for a thing projects may actually use: it tells them what
+API to expect and what documentation to read. The rule is not "avoid product
+names", it is **name a service after the software only when projects can use it**.
+That is exactly why the telemetry store is not called MinIO, and why a project
+store would be.
+
+**The reason it is closed to projects is the backup assumption, not the disk
+space.** Everything in the store today is *derived* — metrics and logs Prometheus
+and Loki have already flushed.
+That is what justifies excluding the namespace from the daily Velero schedule.
+Project state is not derived, so putting it there would make an accepted risk
+wrong **without anything reporting that it had changed** — and the failure mode
+is that the data sits in no backup path at all: not Velero (namespace excluded),
+not Barman (Postgres only).
+
+Two further blockers, either of which would need solving first: there is no
+per-project credential (the install writes a single root user/password to Key
+Vault), and the store is a single replica on one PVC that Loki, Thanos and the
+backup flow all already depend on.
+
+**Revisit when** a project genuinely needs object-storage semantics — an S3 SDK,
+blobs, versioning — rather than somewhere to keep a few KB. That is two pieces of
+work, not one: per-project credentials **and** a backup story this store does not
+have today. The trap is building it *because MinIO is already installed*; that
+reasoning is what would put project data on the observability volume. A second,
+separate instance is the honest answer, not converting this one — and it is the
+one that gets to be called `minio`.
+
+**What building it would take**, so this does not need investigating again. The
+deployment itself is the easy half — copy the shape of `telemetry-store.yaml` and
+`k8s/infra-manifest/telemetry-store/`, which is one Application, a values file and a
+bucket-creation Job. Sizing follows the disk-tier rule: an exact E-tier PVC on
+`disk-standardssd`, and it **costs one of the ~6 remaining attached disks**
+unless it is put on `files-shared` instead. Two traps are already solved in the
+existing install and must be carried over, not rediscovered: the chart's built-in
+`buckets:` provisioning uses a Helm post-install hook that ArgoCD skips when the
+first sync is not clean, so buckets silently never appear — use a standalone
+idempotent Job; and the chart's own `metrics.serviceMonitor` hardcodes
+`release: <release-name>`, which our Prometheus ignores, so the ServiceMonitor
+must be a plain manifest.
+
+The work that does **not** exist yet, and is the real cost:
+
+- **Per-project users and bucket policies.** Today the install writes a single
+  root credential to Key Vault; there is no per-tenant identity of any kind.
+  This needs `mc admin user add` plus a policy per project in the provisioning
+  Job, and credential delivery through ExternalSecret or SealedSecret with the
+  same opt-in discipline the Key Vault store uses.
+- **Deciding the backup posture deliberately.** The daily Velero schedule is
+  `includedNamespaces: "*"` **minus an exclusion list**, so a new namespace is
+  backed up by default — the opposite of the `telemetry-store` namespace's
+  situation, which is excluded by name. That default is right here, but it must
+  be a decision rather than an accident, and PVC snapshots of project blobs are
+  not free.
+- **An ingress, if projects need presigned URLs or browser uploads.** The store is
+  in-cluster only today (no ingress by choice). Adding one is a Traefik
+  IngressRoute plus a certificate, and it makes the store publicly reachable —
+  which is a different security question from anything the store answers today.
+
+**The strongest argument for building it is the billing model, not the API.**
+Its cost is the PVC underneath it — fixed, and paid once by the platform. S3
+calls against it are in-cluster traffic and cost nothing per operation, whereas
+`files-shared` bills every write and list ([entry
+16](#18-persistent-state-has-four-tiers-and-a-disk-is-the-last-one)). For a
+write-heavy project on a centrally-paid cluster that difference is the whole
+decision: a workload that would cost tens of euros a month on `files-shared`
+costs nothing extra here beyond the disk already provisioned. It also puts a
+single reviewable number on the shared bill instead of a per-project variable one
+nobody is watching.
+
+**Where it sits in the four tiers ([entry 18](#18-persistent-state-has-four-tiers-and-a-disk-is-the-last-one)): it is not a fifth tier, it is a
+narrower one.** For "somewhere to keep files" the answer stays `files-shared` — it
+is already RWX, already backed up, and costs no attached disk. A project-facing
+object store is only the right answer when the application genuinely speaks S3:
+an SDK, presigned URLs, versioned objects, or a library that has no filesystem
+mode. That is a real requirement when it appears, and it is the *only* case that
+justifies the work above.
+
+## 18. Persistent state has four tiers, and a disk is the last one
+
+**Current.** A project needing state that survives pod restarts has four
+options. They are ordered by cost, and the smallest need has the cheapest
+answer:
+
+| Need | Use | Cost |
+|---|---|---|
+| A few KB, key-value | ConfigMap or Secret + a scoped ServiceAccount | zero |
+| Structured, queryable, transactional | the shared PostgreSQL | zero — already onboarded |
+| Files, a few MB to GB | a `files-shared` PVC (RWX) | zero attached disks |
+| High-IOPS block storage | a `disk-*` PVC | one of a small, fixed pool |
+
+**Why this needs stating.** `hostPath` was the obvious answer on the previous
+platform and is now rejected at admission by baseline Pod Security (decision 3) —
+correctly, since a hostPath pod reaches the node. Without a stated alternative
+the next reflex is a `disk-*` PVC, and **attached disks are the cluster's
+binding scaling limit**, not CPU or memory: a `Standard_D4s_v6` node takes 12,
+and the platform's own components already hold 6.
+
+**`files-shared` does not consume that budget.** It is backed by
+`file.csi.azure.com` — an SMB share over the network, not a block device attached
+to the VM — so the disk ceiling does not apply to it. It is also
+`ReadWriteMany`, so unlike `hostPath` it survives the pod moving to another node.
+
+**It is Azure-backed, and that is a real tension with "portable by intent".** The
+mitigation is the same one the `disk-*` classes already use: the platform owns
+the StorageClass and gives it a **neutral name**, so a project's PVC says
+`files-shared` and never `azurefile-csi`. Moving to another platform is then a
+change to one StorageClass object rather than an edit to every project's repo,
+and it joins the short list in [Portability](../README.md#portability) instead of
+spreading through `k8s/`.
+
+**That is a mitigation, not an escape, so the tier is offered rather than
+pushed.** A shared filesystem on another platform is a different implementation
+with different semantics, not a drop-in — the class name survives a move, the
+performance and locking behaviour may not. Reach for it when files are genuinely
+the right shape for the data; prefer the shared PostgreSQL, which is already
+portable by construction, whenever the data would fit there.
+
+**Cost is a shared concern, not the project's.** Almost every project on this
+cluster is paid centrally, so a project cannot feel the price of its own storage
+choice — the guidance here has to carry the weight the invoice does not. Two of
+the four tiers bill in a way that a project would not predict:
+
+| Tier | How it bills |
+|---|---|
+| ConfigMap / PostgreSQL | no marginal cost — already provisioned |
+| `files-shared` | **per GB used *and per operation*** |
+| `disk-*` | fixed per E-tier, regardless of use; transactions negligible |
+
+**`files-shared` is the cheap tier for storage and the expensive one for
+traffic**, and the crossover is lower than it looks. Storage is roughly a tenth
+of a `disk-*` PVC's price and bills only what is used rather than the whole
+provisioned tier. But writes and lists are billed per 10k operations, so a
+fixed 32Gi `disk-*` PVC costs the same as about **370,000 `files-shared`
+operations a month** — around 0.14 writes a second, sustained. Below that, files
+is much cheaper; above it, the disk is.
+
+In practice that means state-shaped access is fine and request-shaped access is
+not. A checkpoint written every 30 seconds is cents a month. Session state
+written once per request at 5 req/s is roughly **$85 a month** against $2.40 for
+the disk it replaced — and nothing warns anyone, because it appears only on a
+central invoice nobody reads per project. **Ask how often it is written, not just
+how big it is.**
+
+**Limits worth knowing before choosing:**
+
+- A ConfigMap or Secret is capped at **1 MiB** by the API server, and every write
+  goes through etcd and rewrites the whole object. Suits small state written
+  occasionally; not a write-per-request store. Stay well under the cap rather
+  than approaching it, and use a Secret rather than a ConfigMap when the content
+  is sensitive.
+- `files-shared` is SMB: higher latency, weaker file locking, no `O_DIRECT`. Fine
+  for state and config files. **Do not put a SQLite database on it** — that
+  combination corrupts under lock contention. Use the shared PostgreSQL instead.
+- **Nothing warns you when the disk pool runs out.** The node does not publish
+  `attachable-volumes-azure-disk` in `Allocatable`, so the limit is enforced by
+  Azure at attach time, not by the scheduler. It surfaces as a pod stuck
+  starting, not as a scheduling failure.
+
+**ServiceAccount, Role and RoleBinding stay infra-granted.** The ConfigMap tier
+needs them, and they are excluded from the project GitOps whitelist deliberately
+— a ServiceAccount mints an identity (decision 8). Infra commits them under
+`k8s/projects/PROJECT/infra/`, the same Layer 1 route as a database. The Role
+should name the object with `resourceNames`, so the app can write its own state
+and nothing else.
+
+**There is no object-storage tier, and that is deliberate.** For files, the
+`files-shared` row above is the answer. A project-facing S3 store would be a
+narrower tier than that one, not an extra option beside it — only right when an
+application genuinely speaks S3 rather than wanting somewhere to keep files.
+[Entry 17](#17-the-telemetry-store-is-named-for-its-job-and-minio-is-reserved)
+records what standing one up would cost.
+
+See [onboarding.md](onboarding.md) for the recipes.
+
+## 19. Metric retention is sized from a measured rate, and `0` is not unlimited
+
+**Current.** Thanos keeps raw blocks 10 days, 5-minute downsamples 90 days and
+1-hour downsamples 180 days. The telemetry store's PVC is 64Gi (E6). The
+`weekly-full` Velero schedule keeps backups 90 days.
+
+**The numbers come from a measurement, not a guess.** Taken from the live J26
+cluster on 2026-09-05 — a single-node AKS cluster running the same
+Prometheus/Loki stack:
+
+| | Measured |
+|---|---|
+| Active series | 109 165 |
+| Prometheus TSDB on disk | 14.8 GiB |
+| Covering | 16 days |
+| **Rate** | **≈0.93 GiB/day** |
+
+At that rate the previous settings did not fit. Raw retention of 30 days is
+~28 GiB on its own, against a 32Gi bucket that must also hold the 5m tier, the
+1h tier and Loki's chunks. **A full bucket stops accepting writes, and metric
+ingestion then stops silently** — so the sizing has to be deliberate rather than
+optimistic.
+
+**Treat 0.93 GiB/day as a floor.** It was measured after the event, with the
+cluster quiet; during the camp it was certainly higher. Re-measure before a
+large event rather than trusting this row.
+
+**Raw resolution is the expensive tier and the least useful one.** Cutting it
+from 30d to 10d frees ~18 GiB. What survives a late discovery is the 5-minute
+tier, which is why that one keeps the full 90 days.
+
+### The trap this entry exists to prevent
+
+`0` means opposite things in the two halves of this stack:
+
+| Setting | `0` means |
+|---|---|
+| Prometheus `retention.time` | use the default — **15 days** |
+| Prometheus `retention.size` | unlimited |
+| Thanos `--retention.resolution-*` | keep forever |
+
+"0 means unlimited" is right for two of these and destructive for the third —
+and the first two sit in the same config block, one line apart.
+
+**This is not hypothetical.** On the J26 cluster `retention.time=0d` was set
+intending "keep everything". It resolved to the 15-day default, and because it
+was applied 15 days after the camp ended, every metric from the event was
+deleted. The disk was 24% full: nothing ran out, and nothing alerted. The loss
+was found a month later, by which point the data was long gone.
+
+**Why this cluster would have survived it.** Prometheus retention governs only
+the local window here — the Thanos sidecar has already uploaded the blocks to
+object storage, and the compactor's retention is a separate setting that the
+change would not have touched. A month after the event the 5-minute tier would
+still have held the whole camp.
+
+### Retention is not an archive
+
+The longest tier is 180 days. A project whose metrics must outlive that needs a
+deliberate export when the project ends. **Do not solve it by raising
+retention**: the tiers are sized to the bucket, and an unbounded tier fills it
+and stops ingestion for every project on the cluster.
+
+**Backups are sized to discovery latency, not to RPO.** `weekly-full` went from
+35 to 90 days because the loss of an infra PVC is typically noticed weeks after
+it happens, and a 35-day window can expire before anyone looks. The J26 loss was
+found after a month — inside 90 days, outside 35.
+
+## 20. A test cluster that outlives its install gets its own durable resources
+
+**Current.** A test cluster kept running alongside the real one is given its own
+durable resource group — its own Key Vault, backup storage account and audit
+workspace. It shares nothing with production but the subscription.
+
+**Why: three things collide, and two of them destroy data.**
+
+- **Postgres backups land in the same path.** Both clusters run a CNPG `Cluster`
+  named `shared` writing to the `cnpg-shared` container under the same
+  `serverName`. Two different PostgreSQL instances, one Barman path, different
+  system identifiers. The `serverName` set in entry 19's wake protects a
+  *rebuild*; it does nothing for two clusters running at once.
+- **Velero expires backups it did not create.** The `BackupStorageLocation` has
+  no `prefix`, so both clusters write to the root of the `velero` container —
+  and each one syncs that location and deletes whatever is past its TTL. The
+  test cluster would delete the real cluster's backups.
+- **The GitHub OAuth secrets are per-hostname.** One OAuth app has one callback
+  URL, so test and production need different apps. Sharing a vault means the
+  production install writes its client secret over the key the test cluster
+  reads, and the test cluster's SSO stops working.
+
+Sharing the vault would also hand both clusters the **same Sealed Secrets private
+key**, so a `SealedSecret` committed for one decrypts in the other.
+
+**Why separate resources rather than separate names.** Every durable value is
+already an install-time input, in one of three forms:
+
+| Form | Values |
+|---|---|
+| Runbook variables (`install.md` §0) | `$INFRA_RG`, `$KEY_VAULT_NAME`, `$BACKUP_STORAGE_ACCOUNT`, `$LOG_WORKSPACE` |
+| Manifest placeholders, filled in §9 | `<KEY_VAULT_NAME>`, `<BACKUP_STORAGE_ACCOUNT>`, `<INFRA_RG>` |
+| Bicep params, overridden on the CLI | `auditWorkspaceName`, `auditWorkspaceResourceGroup` |
+
+The third row is the one that catches people: the audit workspace is pinned in
+`webservices.bicepparam`, not templated, so a test cluster must override both of
+its params alongside `clusterName` — which is why §7a says three, not one.
+
+Pointing a test cluster at its own resources therefore costs no code change, and
+the production install stays exactly as documented.
+
+**Rejected: one shared vault with `-test` suffixed keys.** That plus a Velero
+prefix plus a distinct `serverName` is three separate patches rather than one
+boundary, and each can be undone later by an operator writing to the wrong key.
+
+**Rejected: sharing the durable RG and being careful.** "Careful" is not a
+control. The failure mode is silent in all three cases — a backup that overwrites
+another, a deletion that looks like retention, a secret that is simply the wrong
+value.
+
+**Cost, accepted.** One extra storage account and one extra vault for as long as
+the test cluster lives. Both are deleted with its resource group.
+
+**Authentication is not a reason to share.** A managed identity accepts many
+federated credentials, so one identity could serve both clusters. That makes
+sharing *possible*, not advisable.

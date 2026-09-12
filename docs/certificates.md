@@ -28,7 +28,7 @@ grow:
 
 | Zone | Owner | Example |
 |---|---|---|
-| infra services | infra | `*.wsinfra.scouterna.net` (test: `*.wsv2test.j26.se`) |
+| infra services | infra | `*.wsv2test.j26.se` (test: `*.wsv2test.j26.se`) |
 | shared project wildcard | infra | `*.webservices.scouterna.net` — *planned* |
 | project-specific | the project | `*.wsjdev.se`, `scoutid.se`, … |
 

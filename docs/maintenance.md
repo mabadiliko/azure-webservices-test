@@ -58,6 +58,15 @@ Not all bumps are equal. These carry a real risk of breaking changes:
   deleted by a sync — upgrades apply in place.
 - **cert-manager** — generally smooth, but CRD upgrades must be applied (the
   chart handles this with `crds.enabled: true`).
+- **Barman Cloud Plugin** — the **only** app that does not upgrade by bumping
+  `targetRevision`. Its manifest is vendored at
+  `k8s/infra-manifest/barman-cloud-plugin/manifest.yaml`, because the upstream
+  `kubernetes/` kustomize base ships **testing images on a moving tag** and no
+  path in that git tree yields release images. Upgrading means downloading the
+  new release asset over that file — the procedure, and the check that the new
+  file really carries release images, are in the README beside it. The file also
+  contains the `ObjectStore` CRD, so a bump can change the schema that
+  `k8s/infra-manifest/postgres/cluster.yaml` depends on.
 
 Slow/low-risk: MinIO, CloudNativePG (operator; watch the PG major it manages),
 Thanos, Headlamp.
@@ -75,13 +84,75 @@ Thanos, Headlamp.
 
 ## AKS upgrades
 
-- **Patches** (`1.36.x`): automatic via the `patch` upgrade channel + NodeImage
-  channel in `infra/aks.bicep`. Nothing to do.
+- **Patches** (`1.36.x`) and **node images**: automatic, via the `patch` and
+  `NodeImage` channels in `infra/aks.bicep`. Nothing to do — deliberately, see
+  below.
 - **Minors** (`1.36 → 1.37`): manual. Bump `kubernetesVersion` in
   `infra/aks.bicep` + the param files, `az deployment group create` (or
   `az aks upgrade`). Do it before AKS drops support for the running minor
   (check `az aks get-versions -l <region>`). On a single-node cluster the
   upgrade is briefly disruptive — expect a short control-plane/node blip.
+
+**Scaling down is the dangerous direction.** The pool is pinned to one
+availability zone (`zones: ['1']`, [decisions.md](decisions.md) entry 15) exactly
+so this is safe — Azure disks cannot cross zones, and before the pin a
+replacement node could land in a zone with none of the cluster's data. If the
+pool is ever spread across zones again, check where the disks are before removing
+a node:
+
+```bash
+kubectl get pv -o custom-columns='CLAIM:.spec.claimRef.name,\
+ZONE:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values'
+kubectl get nodes -L topology.kubernetes.io/zone
+```
+
+A pod whose disk is in a zone with no node stays `Pending` **permanently** with
+*"node(s) didn't match PersistentVolume's node affinity"* — it does not resolve
+on its own, and the fix is to add a node back in that zone.
+
+**Why node images stay on a channel.** An automatic node-image upgrade will
+replace the node, which is disruptive, and on 2026-08-24 it left the test
+cluster's pool in `provisioningState: Failed` with two nodes billing instead of
+one. Running upgrades by hand was considered and **rejected**: the platform is
+maintained by volunteers, node images ship roughly weekly with OS CVE fixes, and
+a manual step that gets forgotten is worse than an automatic one that
+occasionally disrupts. The fix is to make the disruption survivable, not to move
+it into a runbook nobody runs.
+
+Three things make it survivable, all now in place:
+
+- **One availability zone** ([decisions.md](decisions.md) entry 15) — so a
+  replacement node can always reattach the cluster's disks. Without it the
+  replacement landed in another zone and six workloads were stranded
+  permanently.
+- **`enablePDB: false` on the shared Postgres** — CNPG's PDB protects the
+  primary by role, so with `instances: 1` it is *never* satisfiable and blocks
+  every drain forever. AKS retries rather than forcing: the event is
+  `Eviction blocked by Too Many Requests (usually a pdb): shared-1`, seen 67
+  times over 7 minutes. Removing the PDB unblocked it immediately.
+
+- **Dex keeps its signing keys across restarts** (`storage: type: kubernetes`).
+  Previously an upgrade restarted Dex, rotated its key and logged **everyone**
+  out; the resulting `401` looked exactly like a broken authenticator and caused
+  two wrong diagnoses. Keys now persist as custom resources in etcd — no PVC.
+
+**If SSO fails, check the token's key id first.** It takes seconds and rules out
+the most common cause:
+
+```bash
+curl -s https://dex.$HOST/keys | grep -o '"kid":"[^"]*"'
+```
+
+Compare with the `kid` in the token's JWT header. A mismatch means the token
+predates a key rotation — log in again, nothing is wrong. Only if they **match**
+and the API server still returns `401` is there a real fault to chase
+([decisions.md](decisions.md) entry 16).
+
+**Verifying after an upgrade.** Node images are checked with:
+
+```bash
+az aks nodepool get-upgrades -g $RG --cluster-name $CLUSTER -n <pool>
+```
 
 **A minor upgrade leaves Pod Security behind.** Project namespaces pin
 `pod-security.kubernetes.io/enforce-version` (see
@@ -107,7 +178,7 @@ cluster, so it survives a teardown):
 | Schedule | Scope | When | Retention |
 |---|---|---|---|
 | `daily-projects` | project namespaces (`"*"` minus infra), incl. PVC data | 02:00 daily | 14 days |
-| `weekly-full` | every namespace, infra included | 03:00 Sundays | 35 days |
+| `weekly-full` | every namespace, infra included | 03:00 Sundays | 90 days |
 
 **Why the split.** Project namespaces hold state that exists nowhere else, so
 they are backed up daily. Infra namespaces are reproducible from Git via ArgoCD —
@@ -131,27 +202,27 @@ snapshot its 32Gi PVC on a second, overlapping path. It is still covered by
 
 ### Infra volumes: what is actually protected
 
-"Infra is reproducible from Git" is true of the **manifests**, not of the ~124Gi
-of state in infra PVCs. Those are covered only by `weekly-full` (35-day
+"Infra is reproducible from Git" is true of the **manifests**, not of the ~156Gi
+of state in infra PVCs. Those are covered only by `weekly-full` (90-day
 retention). Per volume:
 
 | PVC | Size | If lost |
 |---|---|---|
 | `postgres/shared-1` | 32Gi | **Own CNPG backup at 02:30** — the real protection; Velero is secondary |
-| `minio/minio` | 32Gi | Backing store for Loki + Thanos. **Weekly is the only copy** — see below |
-| `monitoring/prometheus` | 32Gi | Recent metrics; long-term copies live in Thanos → MinIO |
-| `monitoring/loki` | 16Gi | Recent logs; chunks ship to MinIO |
+| `telemetry-store/telemetry-store` | 64Gi | Backing store for Loki + Thanos. **Weekly is the only copy** — see below |
+| `monitoring/prometheus` | 32Gi | Recent metrics; long-term copies live in Thanos → telemetry store |
+| `monitoring/loki` | 16Gi | Recent logs; chunks ship to the telemetry store |
 | `monitoring/grafana` | 8Gi | **Gap — see below** |
 | `monitoring/alertmanager` | 4Gi | Silences only; regenerate by hand |
 
 **Two accepted decisions, recorded rather than left implicit:**
 
-- **MinIO gets weekly cover only, and that is accepted.** It is single-node and
-  holds observability history that Prometheus and Loki have already flushed to
-  it. Losing it between weekly backups loses up to a week of long-term metrics
-  and logs — annoying, not operationally critical, and the alternative (daily
-  snapshots of a 32Gi volume holding derived data) is not worth the storage.
-  Revisit if MinIO ever holds something that is *not* derived.
+- **The telemetry store gets weekly cover only, and that is accepted.** It is
+  single-node and holds observability history that Prometheus and Loki have
+  already flushed to it. Losing it between weekly backups loses up to a week of
+  long-term metrics and logs — annoying, not operationally critical, and the
+  alternative (daily snapshots of a 64Gi volume holding derived data) is not
+  worth the storage. Revisit if it ever holds something that is *not* derived.
 - **Grafana is the real gap.** Dashboards are vendored in Git and provisioned,
   but **anything created through the UI lives only in this PVC**, with weekly as
   the only copy. A dashboard built on Monday and lost on Friday is gone. The
@@ -268,14 +339,17 @@ endpoint answers on the public internet.
 **This is the higher-value target of the two.** The vault is the cluster's root
 of trust — it holds the **Sealed Secrets private key** (which decrypts every
 `SealedSecret` committed to the public repo), the backup storage-account key,
-the Dex and Grafana GitHub client secrets, and the MinIO root credentials.
+the Dex and Grafana GitHub client secrets, and the telemetry store's root
+credentials.
 Compromise here is worse than compromise of the backup account.
 
 **What protects it.** Authorization is Azure **RBAC**, not legacy access
 policies (`enableRbacAuthorization: true`), so reaching the endpoint grants
 nothing without a role assignment. Soft-delete is on with 90-day retention and
 purge protection is enabled, so secrets cannot be permanently destroyed by an
-attacker or a mistake. What the open endpoint exposes is the **authentication
+attacker or a mistake. A **`CanNotDelete` resource lock** covers the vault
+itself, which soft-delete does not: it makes deletion a deliberate two-step act
+rather than one command. What the open endpoint exposes is the **authentication
 surface** — credential probing and any future Azure-side auth flaw.
 
 **Why it is open.** The same constraint as the backup account: ESO reads the
@@ -319,6 +393,35 @@ needed. Admins also run `az storage` against it from arbitrary networks.
   host or VPN), or
 - `defaultAction: 'Deny'` with the AKS outbound IP pinned to a **static Public
   IP** so it survives rebuilds, plus the admin IPs.
+
+**What protects the account itself.** Two things, both declared in
+`infra/backup-storage.bicep` so a rebuild cannot skip them:
+
+- **A `CanNotDelete` resource lock.** Blob soft-delete (30 days) recovers a
+  deleted *backup*; it does nothing about a deleted *account*. The lock is
+  deliberately `CanNotDelete` and not `ReadOnly` — `ReadOnly` would block
+  `az storage account keys list`, which install.md needs for the CNPG Barman
+  key. Because a lock on any resource also blocks deleting its resource group,
+  this protects `$INFRA_RG` as a whole; the same lock is on the Key Vault and
+  the audit workspace. A resource lock was chosen over a resource-group lock so
+  that DNS record sets in the same group stay deletable.
+
+  A deliberate deletion means removing the lock first — the point is that it
+  cannot happen by accident or in a single command:
+
+  ```bash
+  az lock delete -n no-delete -g $INFRA_RG \
+    --resource $BACKUP_STORAGE_ACCOUNT --resource-type Microsoft.Storage/storageAccounts
+  ```
+
+- **`Standard_RAGZRS` redundancy.** Zone-redundant in the primary region *and*
+  geo-replicated, with read access to the secondary — so a regional Azure
+  failure does not take the backups with it, and they can be read during one
+  without waiting for a failover. **Not `Standard_GRS`:** its primary replica is
+  LRS, so moving `ZRS → GRS` would have *traded away* zone redundancy rather
+  than adding geo. Measured cost (Cool tier, Sweden Central): 0.01250 → 0.02250
+  USD/GB/month, about 1.8×, on an account holding backup metadata and Postgres
+  base backups rather than PVC contents.
 
 **The bigger lever is the key, not the firewall.** `allowSharedKeyAccess: true`
 exists only because the CNPG Barman plugin's Managed-Identity path is finicky

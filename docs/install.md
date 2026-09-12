@@ -322,8 +322,10 @@ az monitor log-analytics workspace show -g $INFRA_RG -n $LOG_WORKSPACE \
   --query '{name:name, retention:retentionInDays, capGb:workspaceCapping.dailyQuotaGb, ingestion:workspaceCapping.dataIngestionStatus}' -o table
 ```
 
-If you overrode `$INFRA_RG`, add `-p auditWorkspaceResourceGroup=$INFRA_RG` to the
-§7a deployment alongside the existing `-p clusterName=$CLUSTER`.
+If you overrode `$INFRA_RG` **or** `$LOG_WORKSPACE`, add
+`-p auditWorkspaceName=$LOG_WORKSPACE -p auditWorkspaceResourceGroup=$INFRA_RG` to
+the §7a deployment alongside the existing `-p clusterName=$CLUSTER`. A test
+cluster with its own durable resources overrides both.
 
 > **It is capped at 1 GB/day, and the cap loses data.** Ingestion stops for the
 > rest of the UTC day once hit — that protects the budget and is the right default
@@ -382,8 +384,8 @@ sleep 20
 
 az keyvault secret list --vault-name $KEY_VAULT_NAME --query "[].name" -o tsv   # what already exists (durable vault)
 
-az keyvault secret set --vault-name $KEY_VAULT_NAME --name minio-root-user             --value admin
-az keyvault secret set --vault-name $KEY_VAULT_NAME --name minio-root-password         --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
+az keyvault secret set --vault-name $KEY_VAULT_NAME --name telemetry-store-root-user     --value admin
+az keyvault secret set --vault-name $KEY_VAULT_NAME --name telemetry-store-root-password --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-admin-password      --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-github-client-secret --value "$GRAFANA_GITHUB_CLIENT_SECRET"
 
@@ -418,7 +420,8 @@ fi
 ```
 
 The `ExternalSecret`s then produce the in-cluster secrets consumers expect:
-`minio-root`, `loki-minio`, `thanos-objstore` (composed from the MinIO values),
+`telemetry-store-root`, `loki-telemetry-store`, `thanos-objstore` (composed from
+the telemetry-store values),
 `grafana-admin`, `grafana-github-oauth`, `dex-oauth` (Dex's GitHub + Headlamp
 client secrets), `headlamp-oidc` (the same Headlamp secret, in its own namespace),
 and the Sealed Secrets `sealed-secrets-key` (a `kubernetes.io/tls` Secret labelled
@@ -427,9 +430,10 @@ and the Sealed Secrets `sealed-secrets-key` (a `kubernetes.io/tls` Secret labell
 > **How the ordering works (no hand-seeding):** sync-waves are arranged so secrets
 > exist before the things that use them. The ESO operator is wave 0; the
 > `ClusterSecretStore` + `ExternalSecret`s (the `external-secrets-config` app) are
-> wave 1, alongside MinIO and ahead of wave-2 monitoring. If a consumer starts a
-> moment before its secret is materialized it crash-loops and **self-heals** the
-> instant ESO reconciles the value. A rebuild recreates every secret from the Key Vault.
+> wave 1, alongside the telemetry store and ahead of wave-2 monitoring. If a
+> consumer starts a moment before its secret is materialized it crash-loops and
+> **self-heals** the instant ESO reconciles the value. A rebuild recreates every
+> secret from the Key Vault.
 
 > **Why infra secrets stay on KV/ESO (not Sealed Secrets):** the cluster also runs
 > Sealed Secrets (the self-service, commit-safe path for *projects*), so it's fair
@@ -441,12 +445,13 @@ and the Sealed Secrets `sealed-secrets-key` (a `kubernetes.io/tls` Secret labell
 > these secrets are consumed in waves 1–2; the sealed-secrets controller is itself
 > wave 2, so a sealed infra secret would gain a longer, more fragile dependency
 > chain than reading straight from KV. **(3) Value handling** — the random secrets
-> (`minio-*`, `grafana-admin-password`) are generated with `openssl rand` directly
-> into KV and no human ever sees the plaintext; the GitHub client secrets are
-> external values you must custody centrally and rotate. Sealing either would mean
-> handling the raw plaintext locally at `kubeseal` time — a downgrade. So: **infra
-> secrets → KV/ESO** (early, durable, controller-independent); **project secrets →
-> Sealed Secrets or KV/ESO**, the project's choice (see onboarding.md "Secrets").
+> (`telemetry-store-*`, `grafana-admin-password`) are generated with
+> `openssl rand` directly into KV and no human ever sees the plaintext; the GitHub
+> client secrets are external values you must custody centrally and rotate.
+> Sealing either would mean handling the raw plaintext locally at `kubeseal`
+> time — a downgrade. So: **infra secrets → KV/ESO** (early, durable,
+> controller-independent); **project secrets → Sealed Secrets or KV/ESO**, the
+> project's choice (see onboarding.md "Secrets").
 
 ---
 
@@ -472,6 +477,17 @@ az deployment group create  -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webs
 > a cluster still called `webservices-v2` — and every later step that does
 > `az aks show -n $CLUSTER` fails with "not found". A CLI `-p` takes precedence
 > over the same parameter in the `.bicepparam` file.
+
+> **A test cluster with its own durable resources overrides three params, not
+> one.** The param file pins the audit workspace to the production name *and*
+> resource group, so override both alongside `clusterName`:
+> ```
+> -p auditWorkspaceName=$LOG_WORKSPACE -p auditWorkspaceResourceGroup=$INFRA_RG
+> ```
+> §5b asserts these two against the bicepparam and prints `MISMATCH` if they
+> disagree — that assertion is what catches a forgotten override. Why a test
+> cluster gets its own durable resources at all: [decisions.md](decisions.md)
+> entry 20.
 
 `$CLUSTER_RG` is the cluster's resource group, distinct from the durable
 `$INFRA_RG`. AKS also auto-creates a *node* resource group (named
@@ -733,6 +749,7 @@ echo "GRAFANA_GITHUB_CLIENT_ID=$GRAFANA_GITHUB_CLIENT_ID"
 echo "DEX_GITHUB_CLIENT_ID=$DEX_GITHUB_CLIENT_ID"
 echo "VELERO_CLIENT_ID=$VELERO_CLIENT_ID"
 echo "BACKUP_STORAGE_ACCOUNT=$BACKUP_STORAGE_ACCOUNT"
+echo "INFRA_RG=$INFRA_RG"
 echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
 echo "NODE_RESOURCE_GROUP=$NODE_RESOURCE_GROUP"
 echo "KEY_VAULT_NAME=$KEY_VAULT_NAME"
@@ -746,8 +763,9 @@ Every placeholder is named for exactly one variable, so the rule is always
 | 1 | `k8s/argocd/infra-apps/external-secrets.yaml` | `<ESO_CLIENT_ID>` |
 | 2 | `k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml` | `<GRAFANA_GITHUB_CLIENT_ID>` |
 | 3 | `k8s/infra-manifest/dex/values.yaml` | `<DEX_GITHUB_CLIENT_ID>` |
-| 4 | `k8s/argocd/infra-apps/velero.yaml` | `<VELERO_CLIENT_ID>`, `<BACKUP_STORAGE_ACCOUNT>`, `<SUBSCRIPTION_ID>` (**twice**), `<NODE_RESOURCE_GROUP>` |
+| 4 | `k8s/argocd/infra-apps/velero.yaml` | `<VELERO_CLIENT_ID>`, `<BACKUP_STORAGE_ACCOUNT>`, `<INFRA_RG>`, `<SUBSCRIPTION_ID>` (**twice**), `<NODE_RESOURCE_GROUP>` |
 | 5 | `k8s/infra-manifest/external-secrets/clustersecretstore.yaml` | `<KEY_VAULT_NAME>` (inside `vaultUrl`) |
+| 6 | `k8s/infra-manifest/postgres/cluster.yaml` | `<BACKUP_STORAGE_ACCOUNT>` (**twice** — the ExternalSecret template and the ObjectStore `destinationPath`) |
 
 > The two GitHub client ids (rows 2 and 3) are **different values from different
 > OAuth apps** — mixing them up breaks that login. That is why neither is called
@@ -776,13 +794,14 @@ an unpushed edit has no effect. Push before applying the root app (§10), and ag
 whenever you change a filled-in value later:
 
 ```bash
-# Stage exactly the five files from the table above — never `git add -A`/`-u`,
+# Stage exactly the six files from the table above — never `git add -A`/`-u`,
 # which would sweep up anything else you happen to have modified.
 git add k8s/argocd/infra-apps/external-secrets.yaml \
         k8s/infra-manifest/monitoring/kube-prometheus-stack-values.yaml \
         k8s/infra-manifest/dex/values.yaml \
         k8s/argocd/infra-apps/velero.yaml \
-        k8s/infra-manifest/external-secrets/clustersecretstore.yaml
+        k8s/infra-manifest/external-secrets/clustersecretstore.yaml \
+        k8s/infra-manifest/postgres/cluster.yaml
 
 git diff --cached          # review: only the placeholders you filled should appear
 git status --short         # anything still unstaged is intentionally left out
@@ -880,7 +899,7 @@ The root app brings up every common service in dependency order:
 |---|---|
 | -1 | argocd-projects (adopts the AppProjects applied above, so later edits are a commit) |
 | 0 | cluster-infra (StorageClasses + ClusterIssuers), cert-manager, external-secrets (ESO operator), gateway-api-crds |
-| 1 | traefik, minio, minio-buckets, cloudnative-pg, external-secrets-config (ClusterSecretStore + ExternalSecrets), barman-cloud-plugin, sealed-secrets-key (durable sealing key ExternalSecret) |
+| 1 | traefik, telemetry-store, telemetry-store-buckets, cloudnative-pg, external-secrets-config (ClusterSecretStore + ExternalSecrets), barman-cloud-plugin, sealed-secrets-key (durable sealing key ExternalSecret) |
 | 2 | monitoring (kube-prometheus-stack + Loki + Alloy), dex, sealed-secrets (controller — after its key), postgres (the shared PostgreSQL server) |
 | 3 | thanos, headlamp, postgres-databases (per-project databases on the shared server) |
 | 4 | governance (alerts + dashboard), velero |
@@ -1122,12 +1141,39 @@ never fires and looks identical to a healthy cluster:
 ```bash
 # expect argocd-metrics UP, and a non-empty result for the metric the rule uses
 kubectl -n monitoring get servicemonitor argocd-metrics
-kubectl -n monitoring exec sts/prometheus-kps-kube-prometheus-stack-prometheus -c prometheus   -- wget -qO- 'localhost:9090/api/v1/query?query=argocd_app_info' | head -c 300
+
+# The Prometheus container has no shell and no wget — query it over a port-forward.
+kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-prometheus 9090:9090 &
+curl -s 'localhost:9090/api/v1/query?query=argocd_app_info' | head -c 300
+kill %1
 ```
 
 An empty `result` array means the scrape is not working — check the ServiceMonitor
 selector still matches ArgoCD's `argocd-metrics` Service labels, which the upstream
 manifest owns and can change on an ArgoCD upgrade.
+
+Two of the seven rules exist to catch exactly that: `ArgoCDMetricsAbsent` and
+`VeleroBackupMetricsAbsent` fire when the metric they depend on has gone missing, so
+a broken scrape reports itself instead of looking like a healthy cluster.
+
+**Expect `VeleroBackupMetricsAbsent` to fire on a fresh install** — about an hour
+after Prometheus starts (its `for: 1h`), staying firing until the first 02:00 backup
+completes. That is correct, not a fault: no backup has ever succeeded, so backup
+alerting really is blind. It clears itself at the first successful run. Note the
+`[48h]` in the expression gives **no** grace here — `absent_over_time` reports a
+series that has never existed from the first evaluation, so only `for:` delays
+anything. It is routed at a 12h repeat rather than the 1h that `critical`
+normally gets, so expect roughly two messages across that window rather than one an
+hour ([decisions.md](decisions.md) entry 11).
+
+```bash
+kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-prometheus 9090:9090 &
+curl -s 'localhost:9090/api/v1/rules' | grep -o '"name":"[A-Za-z]*Absent"'
+kill %1
+```
+
+Expect both names. If a rule is missing entirely, the PrometheusRule was not picked
+up — check it carries `release: kps`.
 
 ### Dual-stack DNS
 
@@ -1372,8 +1418,10 @@ smaller attack surface, matches the "everything in Git" model.
   kubectl get app -n argocd                                    # state of everything
   kubectl annotate app -n argocd <app> \
     argocd.argoproj.io/refresh=hard --overwrite                # re-read Git now
+  # sync — syncOptions must be carried over explicitly, see argocd.md
+  OPTS=$(kubectl get app -n argocd <app> -o jsonpath='{.spec.syncPolicy.syncOptions}')
   kubectl patch app -n argocd <app> --type merge \
-    -p '{"operation":{"initiatedBy":{"username":"'"$USER"'"},"sync":{}}}'   # sync
+    -p '{"operation":{"initiatedBy":{"username":"'"$USER"'"},"sync":{"syncOptions":'"${OPTS:-[]}"'}}}'
   ```
 - **Debug** a stuck sync via a temporary
   `kubectl -n argocd port-forward svc/argocd-server 8080:443`, logging in with the
@@ -1381,10 +1429,18 @@ smaller attack surface, matches the "everything in Git" model.
   -o jsonpath='{.data.password}' | base64 -d`). Not for daily use — the kubectl
   path above needs no shared credential.
 
-If a shared dashboard is ever wanted, expose `argocd-server` via Traefik + GitHub
-OAuth via ArgoCD's bundled Dex (Scouterna org, teams → RBAC). Not done here by
-choice. Note that until it is, `argocd-rbac-cm` is empty and the break-glass
-`admin` is unrestricted — one more reason it is not for daily use.
+**Projects see their own sync status without any of this** — a Role in `argocd`
+scoped to their own Applications, described in
+[onboarding.md](onboarding.md#d-see-your-own-argocd-sync-status-optional) and
+[decisions.md entry 14](decisions.md#14-projects-read-their-own-argocd-status-via-kubernetes-rbac-not-an-argocd-ui).
+
+If a shared dashboard is ever wanted anyway, expose `argocd-server` via Traefik
+and point ArgoCD's `oidc.config` at the **standalone Dex this cluster already
+runs** (§2b) — not ArgoCD's bundled Dex, which would be a second identity
+provider for the same GitHub org. Note that until then, `argocd-rbac-cm` is empty
+and the break-glass `admin` is unrestricted: exposing the UI without first
+setting a default policy of `role:''` would be a real escalation, not a small
+one. One more reason it is not for daily use.
 
 > **A sync overwrites hand edits.** An app left on manual sync (no `automated:`)
 > lets a project change the release in the cluster and keeps that drift — but the
