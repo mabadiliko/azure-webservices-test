@@ -354,15 +354,18 @@ to the §7a deployment. A CLI `-p` wins over the param file.
 
 ## 5c. Audit alerting
 
-Two rules, deployed outside the cluster so they still fire when the cluster is the
-problem — and independent of the in-cluster Alertmanager gap:
+Three rules, deployed outside the cluster so they still fire when the cluster is
+the problem — and independent of the in-cluster Alertmanager gap:
 
 ```bash
 az deployment group create -g $INFRA_RG -f infra/alerts.bicep   -p workspaceName=$LOG_WORKSPACE alertEmail=$ALERT_EMAIL
 ```
 
-- `audit-pipeline-deleted` — someone deletes the diagnostic setting or the
-  workspace. Collection stops silently; the Activity Log is the only record.
+- `audit-diagnostic-setting-deleted` and `audit-workspace-deleted` — someone
+  deletes the diagnostic setting or the workspace. Collection stops silently; the
+  Activity Log is the only record. Two rules rather than one because Azure
+  rejects a subscription-scope Administrative alert unless `operationName` is a
+  top-level `equals`, so it cannot match a list.
 - `audit-ingestion-capped` — the daily cap stops ingestion. The workspace keeps
   reporting healthy while dropping everything, so nothing else would show it.
 
