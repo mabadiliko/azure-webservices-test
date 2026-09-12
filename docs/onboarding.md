@@ -638,14 +638,14 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
    ENVS="dev prod"                  # adjust to match this project's namespaces
 
    for env in $ENVS; do
-     az keyvault secret set --vault-name kv-scouterna-webservices \
+     az keyvault secret set --vault-name kv-scouterna-ws-test \
        --name "postgres-$PROJECT-$env-password" \
        --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)" >/dev/null
    done
 
    # Confirm one secret per environment before moving on — a wrong or empty
    # $PROJECT produces a plausible name that fails much later, at sync time.
-   az keyvault secret list --vault-name kv-scouterna-webservices \
+   az keyvault secret list --vault-name kv-scouterna-ws-test \
      --query "[?starts_with(name,'postgres-$PROJECT-')].name" -o tsv
 
    cd "$(git rev-parse --show-toplevel)/k8s/infra-manifest/postgres/databases"

@@ -1,5 +1,5 @@
 // =============================================================================
-// main.bicep — orchestrator for the "webservices-v2" cluster deployment.
+// main.bicep — orchestrator for the "webservices-v2-test" cluster deployment.
 //
 // Deploys the AKS cluster (aks.bicep). Cluster shape lives in the COMMITTED
 // infra/env/webservices.bicepparam (no secrets, no subscription IDs — this is
@@ -7,7 +7,7 @@
 // =============================================================================
 
 @description('Cluster name')
-param clusterName string = 'webservices-v2'
+param clusterName string = 'webservices-v2-test'
 
 @description('Azure region. Sweden Central.')
 param location string = 'swedencentral'

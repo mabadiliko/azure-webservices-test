@@ -61,7 +61,7 @@ database.
    separate roles, so a leaked dev credential cannot reach prod data:
    ```bash
    for env in dev prod; do
-     az keyvault secret set --vault-name kv-scouterna-webservices \
+     az keyvault secret set --vault-name kv-scouterna-ws-test \
        --name "postgres-<project>-$env-password" \
        --value "$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)" >/dev/null
    done

@@ -1,7 +1,7 @@
 // =============================================================================
 // loganalytics.bicep — durable Log Analytics workspace for API-server audit logs.
 //
-// Deployed to the SEPARATE, long-lived resource group (webservices-infra), NOT the
+// Deployed to the SEPARATE, long-lived resource group (webservices-test-infra), NOT the
 // cluster RG — audit logs whose only purpose is answering "what happened" must
 // outlive the cluster they describe, including a teardown that is itself the thing
 // under investigation.
@@ -10,7 +10,7 @@
 // docs/decisions.md entry 9.
 //
 // Deploy:
-//   az deployment group create -g webservices-infra \
+//   az deployment group create -g webservices-test-infra \
 //     -f infra/loganalytics.bicep -p workspaceName=<name>
 // =============================================================================
 

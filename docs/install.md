@@ -26,22 +26,30 @@ The common services are installed **entirely by ArgoCD** — there is no manual
 
 ## 0. Environment variables (set these once)
 
-Set these at the top of your shell session. Defaults are the real Scouterna
-production values; override any of them for a test deploy (e.g. a throwaway
-`CLUSTER`/`CLUSTER_RG`). Everything below refers to these — they are never
-re-declared.
+Set these at the top of your shell session. Everything below refers to these —
+they are never re-declared.
+
+> **This is the test repo.** Every value below names a **test** resource, and
+> the committed Bicep param file matches. Production uses a different set:
+> cluster `webservices-v2`, RG `webservices-infra`, vault
+> `kv-scouterna-webservices`, account `stwsv2backup`, workspace
+> `log-webservices` — all in `Scouterna/azure-webservices`. The two installs
+> share the Azure subscription and the GitHub org, and nothing else. Do not
+> paste a production name in here: this cluster is expected to outlive a
+> production rebuild, so a collision would let one cluster expire the other's
+> backups. See [decisions.md](decisions.md) entry 20.
 
 ```bash
 # --- Cluster ---
-CLUSTER=webservices-v2            # AKS cluster name (also the dnsPrefix)
-CLUSTER_RG=webservices-v2         # resource group that will hold the cluster
+CLUSTER=webservices-v2-test       # AKS cluster name (also the dnsPrefix)
+CLUSTER_RG=webservices-v2-test    # resource group that will hold the cluster
 LOCATION=swedencentral            # Azure region for everything here
 
 # --- Durable infrastructure (survives cluster teardown/rebuild) ---
-INFRA_RG=webservices-infra        # durable RG: Key Vault, identities, backup storage, audit workspace + alerts
-KEY_VAULT_NAME=kv-scouterna-webservices       # Key Vault name (globally unique, 3-24 chars)
-BACKUP_STORAGE_ACCOUNT=stwsv2backup              # backup storage account (globally unique, 3-24 lowercase alnum)
-LOG_WORKSPACE=log-webservices     # audit workspace (must match auditWorkspaceName in the bicepparam)
+INFRA_RG=webservices-test-infra   # durable RG: Key Vault, identities, backup storage, audit workspace + alerts
+KEY_VAULT_NAME=kv-scouterna-ws-test          # Key Vault name (globally unique, 3-24 chars)
+BACKUP_STORAGE_ACCOUNT=stwsv2testbackup          # backup storage account (globally unique, 3-24 lowercase alnum)
+LOG_WORKSPACE=log-webservices-test # audit workspace (must match auditWorkspaceName in the bicepparam)
 ALERT_EMAIL=info@scouterna.se     # receives audit-pipeline alerts (a shared mailbox, not a person)
 SLACK_ALERT_CHANNEL='#webservices-alerts'   # must match the channel in kube-prometheus-stack-values.yaml
 
@@ -309,8 +317,9 @@ az deployment group create -g $INFRA_RG -f infra/loganalytics.bicep \
 > down. The only proof this works is the §11 query.
 
 Idempotent, so a rebuild re-runs it as a no-op. **Assert** both the name and the
-resource group — the name alone is not enough, because §0 invites overriding
-`$INFRA_RG` for a test deploy while the bicepparam pins the RG:
+resource group — the name alone is not enough, because a workspace name that
+matches some *other* workspace deploys happily. In this repo §0 and the
+bicepparam already agree, so this should print OK; it catches an edited §0:
 
 ```bash
 grep -q "auditWorkspaceName = '$LOG_WORKSPACE'"          infra/env/webservices.bicepparam \
@@ -322,10 +331,9 @@ az monitor log-analytics workspace show -g $INFRA_RG -n $LOG_WORKSPACE \
   --query '{name:name, retention:retentionInDays, capGb:workspaceCapping.dailyQuotaGb, ingestion:workspaceCapping.dataIngestionStatus}' -o table
 ```
 
-If you overrode `$INFRA_RG` **or** `$LOG_WORKSPACE`, add
-`-p auditWorkspaceName=$LOG_WORKSPACE -p auditWorkspaceResourceGroup=$INFRA_RG` to
-the §7a deployment alongside the existing `-p clusterName=$CLUSTER`. A test
-cluster with its own durable resources overrides both.
+If that printed `MISMATCH`, either put §0 back or add
+`-p auditWorkspaceName=$LOG_WORKSPACE -p auditWorkspaceResourceGroup=$INFRA_RG`
+to the §7a deployment. A CLI `-p` wins over the param file.
 
 > **It is capped at 1 GB/day, and the cap loses data.** Ingestion stops for the
 > rest of the UTC day once hit — that protects the budget and is the right default
@@ -460,10 +468,9 @@ and the Sealed Secrets `sealed-secrets-key` (a `kubernetes.io/tls` Secret labell
 ## 7a. Review params + deploy
 
 `infra/env/webservices.bicepparam` holds the cluster shape (name, region, VM size,
-node count, SLA tier). It is committed and holds no secrets. The cluster **name**
-is overridden on the command line below (so a test deploy needs no edit to the
-committed file); if you changed `$LOCATION` or want a different node size/count,
-edit the param file.
+node count, SLA tier). It is committed and holds no secrets. In this repo it
+already carries the test cluster's name and audit workspace, matching §0. If you
+changed `$LOCATION` or want a different node size/count, edit the param file.
 
 ```bash
 az group create -n $CLUSTER_RG -l $LOCATION
@@ -471,23 +478,17 @@ az deployment group what-if -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webs
 az deployment group create  -g $CLUSTER_RG -f infra/main.bicep -p infra/env/webservices.bicepparam -p clusterName=$CLUSTER
 ```
 
-> **`-p clusterName=$CLUSTER` is not optional.** The param file pins
-> `clusterName = 'webservices-v2'` (the production name), so without this
-> override a test deploy creates a resource group named `$CLUSTER_RG` containing
-> a cluster still called `webservices-v2` — and every later step that does
-> `az aks show -n $CLUSTER` fails with "not found". A CLI `-p` takes precedence
-> over the same parameter in the `.bicepparam` file.
+> **Keep `-p clusterName=$CLUSTER`.** It is redundant while §0 and the param
+> file agree, and it is the safety net the moment they do not: a CLI `-p` takes
+> precedence over the same parameter in the `.bicepparam` file. Without it, an
+> edited §0 would create a resource group named `$CLUSTER_RG` containing a
+> cluster under the param file's name, and every later `az aks show -n $CLUSTER`
+> would fail with "not found".
 
-> **A test cluster with its own durable resources overrides three params, not
-> one.** The param file pins the audit workspace to the production name *and*
-> resource group, so override both alongside `clusterName`:
-> ```
-> -p auditWorkspaceName=$LOG_WORKSPACE -p auditWorkspaceResourceGroup=$INFRA_RG
-> ```
-> §5b asserts these two against the bicepparam and prints `MISMATCH` if they
-> disagree — that assertion is what catches a forgotten override. Why a test
-> cluster gets its own durable resources at all: [decisions.md](decisions.md)
-> entry 20.
+> **The audit workspace needs no override in this repo** — the param file names
+> the test workspace and test RG. §5b asserts that and prints `MISMATCH` if it
+> ever stops being true. Why a test cluster gets its own durable resources at
+> all: [decisions.md](decisions.md) entry 20.
 
 `$CLUSTER_RG` is the cluster's resource group, distinct from the durable
 `$INFRA_RG`. AKS also auto-creates a *node* resource group (named
@@ -772,9 +773,9 @@ Every placeholder is named for exactly one variable, so the rule is always
 > just `GITHUB_CLIENT_ID`.
 
 > **Deploying under a different `$CLUSTER` name?** `alloy-values.yaml` hardcodes
-> the Loki `cluster` label as `webservices-v2` in **two** places (pod logs and
-> Kubernetes events). It is a plain Helm values file with no templating, so it
-> cannot pick the name up automatically. Change both or neither — a mismatch
+> the Loki `cluster` label as `webservices-v2-test` in **two** places (pod logs
+> and Kubernetes events). It is a plain Helm values file with no templating, so
+> it cannot pick the name up automatically. Change both or neither — a mismatch
 > silently splits logs and events across two `cluster` values, and event panels
 > read as empty rather than erroring.
 

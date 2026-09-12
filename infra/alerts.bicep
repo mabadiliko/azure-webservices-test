@@ -8,7 +8,7 @@
 // What each rule catches and what it costs: docs/decisions.md entry 9.
 //
 // Deploy:
-//   az deployment group create -g webservices-infra \
+//   az deployment group create -g webservices-test-infra \
 //     -f infra/alerts.bicep -p workspaceName=<name> alertEmail=<address>
 // =============================================================================
 

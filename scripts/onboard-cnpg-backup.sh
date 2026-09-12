@@ -39,8 +39,8 @@ PROJECT="${1:?project name required}"
 # on `az storage container create`.
 # Overridable, because a test cluster running alongside the real one has its own
 # durable resource group and storage account — docs/decisions.md entry 20.
-INFRA_RG="${INFRA_RG:-webservices-infra}"
-STORAGE_ACCOUNT="${BACKUP_STORAGE_ACCOUNT:-stwsv2backup}"
+INFRA_RG="${INFRA_RG:-webservices-test-infra}"
+STORAGE_ACCOUNT="${BACKUP_STORAGE_ACCOUNT:-stwsv2testbackup}"
 CONTAINER="cnpg-${PROJECT}"
 
 # The project name becomes both a Kubernetes namespace and this container name.

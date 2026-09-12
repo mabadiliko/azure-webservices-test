@@ -1,7 +1,7 @@
 // =============================================================================
 // backup-storage.bicep — durable Azure Blob storage for cluster backups.
 //
-// Deployed to the SEPARATE, long-lived resource group (webservices-infra),
+// Deployed to the SEPARATE, long-lived resource group (webservices-test-infra),
 // NOT the cluster RG — so backups survive cluster teardown/loss. This breaks
 // the circular dependency of backing up to the in-cluster telemetry store (single node).
 // Velero writes namespace/state backups here; CloudNativePG can also target it
@@ -11,7 +11,7 @@
 // network. Rationale and what would close it: docs/maintenance.md.
 //
 // Deploy:
-//   az deployment group create -g webservices-infra \
+//   az deployment group create -g webservices-test-infra \
 //     -f infra/backup-storage.bicep -p storageAccountName=<name>
 // =============================================================================
 

@@ -1,5 +1,5 @@
 // =============================================================================
-// "webservices-v2" AKS cluster — shared Scouterna Kubernetes cluster
+// "webservices-v2-test" AKS cluster — shared Scouterna Kubernetes cluster
 // -----------------------------------------------------------------------------
 // A purpose-built, portable-by-intent foundation:
 //   1. networkPlugin: azure + overlay   -> modern CNI (no deprecated kubenet)
@@ -21,8 +21,8 @@
 // (main.bicep is the entry point; the bicepparam declares `using '../main.bicep'`.)
 // =============================================================================
 
-@description('Cluster name. webservices-v2')
-param clusterName string = 'webservices-v2'
+@description('Cluster name. webservices-v2-test')
+param clusterName string = 'webservices-v2-test'
 
 @description('Azure region. Sweden Central.')
 param location string = 'swedencentral'

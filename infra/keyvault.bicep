@@ -1,7 +1,7 @@
 // =============================================================================
 // keyvault.bicep — durable Key Vault for centralized secrets.
 //
-// Deployed to a SEPARATE, long-lived resource group (e.g. webservices-infra),
+// Deployed to a SEPARATE, long-lived resource group (e.g. webservices-test-infra),
 // NOT the cluster RG — so it survives cluster teardown/rebuild. The cluster's
 // External Secrets Operator federates to this vault via Workload Identity.
 //
@@ -10,7 +10,7 @@
 // docs/maintenance.md ("Accepted risks") is worth reading before changing it.
 //
 // Deploy:
-//   az deployment group create -g webservices-infra \
+//   az deployment group create -g webservices-test-infra \
 //     -f infra/keyvault.bicep -p keyVaultName=<name>
 // =============================================================================
 

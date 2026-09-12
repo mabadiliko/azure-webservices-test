@@ -1,5 +1,5 @@
 // =============================================================================
-// Params for the "webservices-v2" AKS cluster.
+// Params for the "webservices-v2-test" AKS cluster (TEST REPO — see note below).
 //
 // This file is committed — it holds no secrets, only cluster shape. The Azure
 // subscription is selected out-of-band (`az account set`) / by the target
@@ -9,7 +9,12 @@
 // =============================================================================
 using '../main.bicep'
 
-param clusterName = 'webservices-v2'
+// TEST REPO: these name the TEST cluster and its own durable resources, and they
+// match docs/install.md §0. Production's values live in Scouterna/azure-webservices.
+// The two clusters must never share a Key Vault, backup account or workspace —
+// docs/decisions.md entry 20.
+
+param clusterName = 'webservices-v2-test'
 param location = 'swedencentral'
 
 // --- Budget-tuned defaults ---
@@ -20,5 +25,5 @@ param nodeCount = 1              // Manual scaling: bump this + redeploy to add 
 param zones = ['1']              // ONE zone — disks cannot cross zones (decisions.md 15).
 
 // --- Audit logging (docs/decisions.md 9) ---
-param auditWorkspaceName = 'log-webservices'
-param auditWorkspaceResourceGroup = 'webservices-infra'
+param auditWorkspaceName = 'log-webservices-test'
+param auditWorkspaceResourceGroup = 'webservices-test-infra'
