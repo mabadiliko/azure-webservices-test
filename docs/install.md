@@ -219,11 +219,19 @@ the vault in the right region too.
 ## 4. Managed identities + Key Vault role grant
 
 Two managed identities live in $INFRA_RG and persist across rebuilds: one for ESO
-(reads Key Vault), one for Velero (writes backups). Create them and grant ESO read
-access to the vault:
+(reads Key Vault), one for Velero (writes backups). Create them, grant ESO read
+access to the vault, and grant yourself write access:
 
 ```bash
 KEY_VAULT_ID=$(az keyvault show -n $KEY_VAULT_NAME --query id -o tsv)
+
+# Let yourself write secrets. Under RBAC authorization even the account that
+# created the vault needs an explicit role, and §5 already writes one secret,
+# so this cannot wait for §6.
+ME=$(az ad signed-in-user show --query id -o tsv)
+az role assignment create --assignee-object-id "$ME" --assignee-principal-type User \
+  --role "Key Vault Secrets Officer" --scope "$KEY_VAULT_ID"
+sleep 20    # RBAC propagation; a write attempted too early fails Forbidden
 
 # ESO identity — reads secrets from the Key Vault
 az identity create -g $INFRA_RG -n $ESO_IDENTITY -l $LOCATION
@@ -382,17 +390,11 @@ the alert will fire and reach no one.
 **rebuild recreates them automatically** — you never hand-create in-cluster
 secrets.
 
-First let yourself write secrets (under an RBAC vault even the creator needs an
-explicit role), then set the four secrets. The GitHub client secret is the real
-value from §2.
+Your write access to the vault was granted back in §4, because §5 already
+needed it. Set the secrets now. The GitHub client secret is the real value
+from §2.
 
 ```bash
-# Grant yourself write access (once), then wait for RBAC to propagate
-ME=$(az ad signed-in-user show --query id -o tsv)
-az role assignment create --assignee-object-id "$ME" --assignee-principal-type User \
-  --role "Key Vault Secrets Officer" --scope "$KEY_VAULT_ID"
-sleep 20
-
 az keyvault secret list --vault-name $KEY_VAULT_NAME --query "[].name" -o tsv   # what already exists (durable vault)
 
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name telemetry-store-root-user     --value admin
