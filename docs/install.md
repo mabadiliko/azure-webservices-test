@@ -50,7 +50,10 @@ INFRA_RG=webservices-test-infra   # durable RG: Key Vault, identities, backup st
 KEY_VAULT_NAME=kv-scouterna-ws-test          # Key Vault name (globally unique, 3-24 chars)
 BACKUP_STORAGE_ACCOUNT=stwsv2testbackup          # backup storage account (globally unique, 3-24 lowercase alnum)
 LOG_WORKSPACE=log-webservices-test # audit workspace (must match auditWorkspaceName in the bicepparam)
-ALERT_EMAIL=info@scouterna.se     # receives audit-pipeline alerts (a shared mailbox, not a person)
+# Receives the audit-pipeline alerts. A shared, monitored mailbox rather than a
+# person, whose address stops being read when they move on. Override it in the
+# shell for an install where that mailbox is not ready yet.
+ALERT_EMAIL=info@scouterna.se
 SLACK_ALERT_CHANNEL='#webservices-alerts'   # must match the channel in kube-prometheus-stack-values.yaml
 
 # --- Identities (in $INFRA_RG; persist across rebuilds) ---
