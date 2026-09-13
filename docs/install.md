@@ -740,6 +740,20 @@ needs the DNS from §11. Verification is in §11.
 Project developers are *not* granted here — they get per-namespace RoleBindings
 through the normal onboarding flow (see [onboarding.md](onboarding.md) section B).
 
+**Commit the kubeconfig.** It is how developers get it — `k8s/access/README.md`
+points them at the repo copy. It holds the API server address, the cluster's
+public CA and an `exec` block, and **no token or secret**, so it is safe in a
+public repo. It is also cluster-specific, so a rebuild replaces it:
+
+```bash
+git add k8s/access/oidc-kubeconfig
+git commit -m "Regenerate the shared developer kubeconfig"
+```
+
+> Despite the name, this file is **not** ignored by `.gitignore`, and that is
+> deliberate — the patterns there (`kubeconfig`, `*.kubeconfig`) target the
+> *admin* kubeconfig, which does carry credentials and must never be committed.
+
 ## 9. Fill the manifest placeholders, then commit + push
 
 Fill the `<...>` placeholders in the manifests. These are hostnames and Azure
@@ -1365,7 +1379,12 @@ Empty output means it was never applied. Re-run the `add` above.
 
 Then commit the filled `dex.json`. Nothing reads it from git — `az` took it from
 your working tree — but it is the only record of which issuer this cluster was
-told to trust.
+told to trust, and §9 could not stage it because it was not filled yet:
+
+```bash
+git add infra/jwtauthenticator/dex.json
+git commit -m "Point the JWTAuthenticator at this cluster's Dex"
+```
 
 
 ### Headlamp: log in and actually list something
