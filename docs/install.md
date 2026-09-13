@@ -585,14 +585,14 @@ path; the authenticator that uses it is registered in §11.
 > administer it with the admin kubeconfig instead of GitHub SSO.
 
 > ⚠️ **`az feature register` is SUBSCRIPTION-wide, not cluster-scoped.** The three
-> commands below have three different blast radii, and only one is confined to
-> this cluster:
+> commands this SSO path needs have three different blast radii, and only one is
+> confined to this cluster:
 >
 > | Command | Scope | Reaches other clusters? |
 > |---|---|---|
 > | `az extension add` | this **workstation** only | no — just your local `az` |
 > | `az feature register` | the whole **subscription** | **yes, potentially** |
-> | `az aks jwtauthenticator add` | this **cluster** only | no |
+> | `az aks jwtauthenticator add` (§11) | this **cluster** only | no |
 >
 > If the subscription also hosts production workloads, registering a preview
 > feature there is a decision to make deliberately — not a routine step. In
@@ -623,10 +623,10 @@ az provider show --namespace Microsoft.ContainerService \
   --query registrationState -o tsv                                  # expect Registered
 ```
 
-**All three as expected? Skip the rest of this step** and go straight to
-`dex.json` below. Feature registration is subscription-wide and permanent, so an
-earlier install on this subscription has already done it — there is nothing to
-repeat. Otherwise run only the parts that came back wrong:
+**All three as expected? Skip the rest of this step** and continue at §8c.
+Feature registration is subscription-wide and permanent, so an earlier install on
+this subscription has already done it — there is nothing to repeat. Otherwise run
+only the parts that came back wrong:
 
 ```bash
 az extension add --name aks-preview                                    # once per workstation
@@ -839,8 +839,7 @@ git add k8s/argocd/infra-apps/external-secrets.yaml \
         k8s/infra-manifest/postgres/cluster.yaml \
         k8s/infra-manifest/headlamp/deployment.yaml \
         k8s/infra-manifest/headlamp/ingress.yaml \
-        k8s/infra-manifest/monitoring/alloy-values.yaml \
-        infra/jwtauthenticator/dex.json
+        k8s/infra-manifest/monitoring/alloy-values.yaml
 
 git diff --cached          # review: only the placeholders you filled should appear
 git status --short         # anything still unstaged is intentionally left out
@@ -1362,8 +1361,11 @@ az aks jwtauthenticator list -g $CLUSTER_RG --cluster-name $CLUSTER \
   --query "[].name" -o tsv        # expect: dex
 ```
 
-Empty output means it was never applied. Re-run the `add` above. Commit the
-filled `dex.json` with the rest — it is part of the install branch.
+Empty output means it was never applied. Re-run the `add` above.
+
+Then commit the filled `dex.json`. Nothing reads it from git — `az` took it from
+your working tree — but it is the only record of which issuer this cluster was
+told to trust.
 
 
 ### Headlamp: log in and actually list something
