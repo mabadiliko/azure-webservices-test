@@ -8,6 +8,9 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "2"
+    # Admission defaulting, not an operator, writes the drift here: the diff is
+    # computed from a server-side apply dry-run so defaults are accounted for.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -21,17 +24,6 @@ spec:
     path: k8s/infra-manifest/postgres
     directory:
       recurse: false          # databases/ is a separate app
-  ignoreDifferences:
-    # ESO writes defaults back into every ExternalSecret it reconciles.
-    - group: external-secrets.io
-      kind: ExternalSecret
-      managedFieldsManagers:
-        - external-secrets
-    # The CNPG operator defaults ~15 fields on the Cluster it manages.
-    - group: postgresql.cnpg.io
-      kind: Cluster
-      managedFieldsManagers:
-        - manager
   syncPolicy:
     automated:
       prune: true
