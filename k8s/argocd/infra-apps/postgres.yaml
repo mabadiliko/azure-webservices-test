@@ -21,9 +21,10 @@ spec:
   source:
     repoURL: https://github.com/mabadiliko/azure-webservices-test.git
     targetRevision: main
+    # Not recursed (the default), so databases/ stays a separate app. Declaring
+    # `directory.recurse: false` here instead would be dropped from the stored
+    # object as a zero value, leaving infra-root permanently OutOfSync.
     path: k8s/infra-manifest/postgres
-    directory:
-      recurse: false          # databases/ is a separate app
   syncPolicy:
     automated:
       prune: true
