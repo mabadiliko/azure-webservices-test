@@ -747,7 +747,7 @@ public repo. It is also cluster-specific, so a rebuild replaces it:
 
 ```bash
 git add k8s/access/oidc-kubeconfig
-git commit -m "Regenerate the shared developer kubeconfig"
+git commit -m "Update the shared developer kubeconfig"   # first install or rebuild
 ```
 
 > Despite the name, this file is **not** ignored by `.gitignore`, and that is
