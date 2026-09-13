@@ -417,14 +417,16 @@ az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-github-client
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-github-client-secret   --value "$DEX_GITHUB_CLIENT_SECRET"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-headlamp-client-secret --value "$DEX_HEADLAMP_CLIENT_SECRET"
 
-# Slack incoming webhook for Alertmanager (§0). Assert before storing: a
-# placeholder here leaves Alertmanager running and delivering nothing, which
-# reads exactly like a quiet channel.
+# Slack incoming webhook for Alertmanager (§0). Stored ONLY if it is a real
+# webhook: a placeholder here leaves Alertmanager running and delivering
+# nothing, which reads exactly like a quiet channel. Not `exit 1`, so pasting
+# this block into an interactive shell cannot close it.
 case "$SLACK_WEBHOOK_URL" in
-  https://hooks.slack.com/services/*) ;;
-  *) echo "STOP: SLACK_WEBHOOK_URL is not a real Slack webhook — see §0" ;;
+  https://hooks.slack.com/services/*)
+    az keyvault secret set --vault-name $KEY_VAULT_NAME --name alertmanager-slack-webhook-url   --value "$SLACK_WEBHOOK_URL" ;;
+  *)
+    echo "NOT STORED: SLACK_WEBHOOK_URL is not a real Slack webhook — see §0" ;;
 esac
-az keyvault secret set --vault-name $KEY_VAULT_NAME --name alertmanager-slack-webhook-url   --value "$SLACK_WEBHOOK_URL"
 ```
 
 **Sealed Secrets sealing key (do this once; it must survive every rebuild).** The
@@ -1107,8 +1109,11 @@ workspace, a hit daily cap, or a category that emits nothing all look identical
 from the cluster side. Query the workspace, which is the only thing that proves it:
 
 ```bash
+# `[]`, not `value[]`: az returns the settings as a bare list. `value[]` matches
+# nothing and prints an empty result, which reads as "no diagnostic setting" —
+# a false negative on the one step that is supposed to prove there is one.
 az monitor diagnostic-settings list --resource "$(az aks show -g $CLUSTER_RG -n $CLUSTER --query id -o tsv)" \
-  --query "value[].{name:name, table:logAnalyticsDestinationType, categories:logs[?enabled].category}" -o json
+  --query "[].{name:name, table:logAnalyticsDestinationType, categories:logs[?enabled].category}" -o json
 
 WORKSPACE_GUID=$(az monitor log-analytics workspace show -g $INFRA_RG -n $LOG_WORKSPACE --query customerId -o tsv)
 az monitor log-analytics query --workspace "$WORKSPACE_GUID" \
