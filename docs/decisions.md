@@ -52,7 +52,7 @@ JWTAuthenticator is untested. **This is not pending a test** — the identity mo
 is the reason, and a test cannot change it.
 
 **Cost, accepted.** The JWTAuthenticator is an AKS preview feature applied
-out-of-band with `az` ([install.md](install.md) §8b), so the developer path depends
+out-of-band with `az` ([install.md](install.md) §11), so the developer path depends
 on a preview capability. Revocation is removing someone from the GitHub team, which
 takes effect on their next login; an already-issued token stays valid until it
 expires (`idTokens: 24h`).

@@ -567,7 +567,7 @@ az identity federated-credential create -g $INFRA_RG --identity-name $VELERO_IDE
   --audiences "api://AzureADTokenExchange"
 ```
 
-## 8b. Trust Dex on the API server (developer SSO)
+## 8b. Enable the JWTAuthenticator preview (subscription-wide)
 
 Without this, Headlamp and `kubectl` SSO **do not work**: Dex issues a valid
 token, the API server does not trust it, and every request is rejected. It is an
@@ -576,9 +576,9 @@ and the symptom does not point at it: the GitHub login succeeds and then **bounc
 straight back to the login screen**. (A login that succeeds and shows an *empty*
 UI is a different fault — that is RBAC, §8c or Headlamp's own role.)
 
-It is placed here, before ArgoCD, because it needs only a running cluster — not
-Dex itself. The `az feature register` can take several minutes to leave
-`Registering`, so starting it early keeps it off the critical path.
+It is placed here because `az feature register` is subscription-wide and can take
+several minutes to leave `Registering`. Doing it now keeps it off the critical
+path; the authenticator that uses it is registered in §11.
 
 > **Preview feature.** `JWTAuthenticatorPreview` is in preview; weigh that before
 > relying on it in production. The cluster is fully usable without it — you just
@@ -642,51 +642,17 @@ az feature show --namespace Microsoft.ContainerService --name JWTAuthenticatorPr
 az provider register --namespace Microsoft.ContainerService
 ```
 
-`infra/jwtauthenticator/dex.json` carries the claim mappings. It holds a `<HOST>`
-placeholder like the manifests, but it is the **one placeholder `--expect-filled`
-cannot see**: the checker only scans YAML under `k8s/`, and this file is JSON
-under `infra/`. It is also needed *here*, before §9 fills the rest. So this step
-fills and asserts it on its own. A wrong issuer here is the classic silent
-failure — nothing rejects it, and every login fails token validation later.
+`infra/jwtauthenticator/dex.json` and the `az aks jwtauthenticator add` that
+consumes it are **not here** — they are in §11, once Dex is actually serving.
+Azure fetches the issuer's discovery document and refuses an issuer it cannot
+reach, so the command cannot run before DNS and certificates exist:
 
-```bash
-# Fill it. Matches both the <HOST> placeholder and an already-filled hostname,
-# so this is safe to re-run and safe on a copied tree.
-sed -i "s#\"url\": \"https://dex\.[^\"]*\"#\"url\": \"https://dex.$HOST\"#" \
-  infra/jwtauthenticator/dex.json
-
-# Then assert. -F: $HOST contains dots, which are regex wildcards unquoted.
-grep -qF "\"url\": \"https://dex.$HOST\"" infra/jwtauthenticator/dex.json \
-  && echo "issuer OK: https://dex.$HOST" \
-  || echo "MISMATCH — currently: $(grep -o 'https://dex\.[^"]*' infra/jwtauthenticator/dex.json)"
-
-# Commit the filled file with the rest at §9 — it is part of the install branch.
-
-az aks jwtauthenticator add -g $CLUSTER_RG --cluster-name $CLUSTER \
-  --name dex --config-file infra/jwtauthenticator/dex.json
-# use `update` instead of `add` if one already exists
+```
+(JWTAuthenticatorInvalidIssuer) The issuer URL "https://dex.<HOST>" must be
+publicly accessible.
 ```
 
-> A wrong issuer is **not** rejected at apply time — the resource is created
-> happily and every login then fails token validation, which looks like a broken
-> Dex rather than a stale URL.
-
-This maps a Dex token to a cluster identity: the user becomes
-`aks:jwt:<github-login>`, and each GitHub team becomes
-`aks:jwt:<org>:<Team Display Name>` — the **display name verbatim, spaces
-included**, not the slug.
-
-**Assert it landed before moving on.** This is the only step in Part 3 that
-leaves no cluster-visible artifact — no pod, no CR, nothing `kubectl` can show —
-so a skipped or failed §8b stays invisible until someone tries to log in at §11,
-about fifteen steps later:
-
-```bash
-az aks jwtauthenticator list -g $CLUSTER_RG --cluster-name $CLUSTER \
-  --query "[].name" -o tsv        # expect: dex
-```
-
-Empty output means it was never applied. Re-run the `add` above.
+Only the subscription-level enablement above belongs this early.
 
 ## 8c. Grant the infra team cluster-admin
 
@@ -795,7 +761,9 @@ git diff --stat    # expect: dex, headlamp x2, kube-prometheus-stack, alloy
 `<HOST>` becomes the ingress host, the TLS host, Grafana's `root_url`, Dex's
 issuer and both OIDC callback URLs. `<CLUSTER>` becomes the Loki `cluster` label
 in **both** Alloy pipelines — pod logs and Kubernetes events. The one `<HOST>`
-this misses is `infra/jwtauthenticator/dex.json`, which §8b already filled.
+this misses is `infra/jwtauthenticator/dex.json`, filled in §11 where it is
+used — it cannot be filled sooner, because Azure rejects an issuer that is not
+yet reachable.
 
 > These two were committed literals until 2026-09-12. A copy of the repo then
 > served the *original* cluster's hostnames while its operator pointed DNS and
@@ -1337,6 +1305,67 @@ separate, GitHub-side question:
 > org your testers actually belong to. Same applies to Grafana's
 > `role_attribute_path` team slugs (§2a).
 
+### Register the Dex issuer with the API server
+
+Until this exists, Dex issues valid tokens and the API server rejects every one:
+the GitHub login succeeds and **bounces straight back to the login screen**. (A
+login that succeeds and shows an *empty* UI is a different fault — that is RBAC,
+§8c or Headlamp's own role.)
+
+**This cannot be done earlier.** `az aks jwtauthenticator add` fetches the
+issuer's OIDC discovery document and refuses an issuer it cannot reach, so it
+needs all three of: Dex running (wave 2, §10), DNS published (above), and a
+certificate issued. The preview feature it depends on was enabled in §8b.
+
+`infra/jwtauthenticator/dex.json` carries the claim mappings and holds a `<HOST>`
+placeholder. It is the one placeholder `--expect-filled` cannot see — the checker
+scans YAML under `k8s/`, and this is JSON under `infra/` — so fill and assert it
+by hand:
+
+```bash
+# Fill it. Matches both the <HOST> placeholder and an already-filled hostname,
+# so this is safe to re-run and safe on a copied tree.
+sed -i "s#\"url\": \"https://dex\.[^\"]*\"#\"url\": \"https://dex.$HOST\"#" \
+  infra/jwtauthenticator/dex.json
+
+# Then assert. -F: $HOST contains dots, which are regex wildcards unquoted.
+grep -qF "\"url\": \"https://dex.$HOST\"" infra/jwtauthenticator/dex.json \
+  && echo "issuer OK: https://dex.$HOST" \
+  || echo "MISMATCH — currently: $(grep -o 'https://dex\.[^"]*' infra/jwtauthenticator/dex.json)"
+
+# Prove Azure will accept the issuer BEFORE asking Azure for it — this is the
+# exact thing it checks, and a local failure here is far easier to read.
+curl -sS --max-time 10 -o /dev/null -w '%{http_code}\n' \
+  "https://dex.$HOST/.well-known/openid-configuration"     # expect 200
+
+az aks jwtauthenticator add -g $CLUSTER_RG --cluster-name $CLUSTER \
+  --name dex --config-file infra/jwtauthenticator/dex.json
+# use `update` instead of `add` if one already exists
+```
+
+> **Reachable is not the same as correct.** Azure checks that the issuer answers,
+> not that it is *this* cluster's Dex. An issuer pointing at some other live Dex
+> is accepted happily, and every login then fails token validation — which reads
+> as a broken Dex rather than a stale URL.
+
+This maps a Dex token to a cluster identity: the user becomes
+`aks:jwt:<github-login>`, and each GitHub team becomes
+`aks:jwt:<org>:<Team Display Name>` — the **display name verbatim, spaces
+included**, not the slug.
+
+**Assert it landed.** This step leaves no cluster-visible artifact — no pod, no
+CR, nothing `kubectl` can show — so a failed one stays invisible until someone
+tries to log in, just below:
+
+```bash
+az aks jwtauthenticator list -g $CLUSTER_RG --cluster-name $CLUSTER \
+  --query "[].name" -o tsv        # expect: dex
+```
+
+Empty output means it was never applied. Re-run the `add` above. Commit the
+filled `dex.json` with the rest — it is part of the install branch.
+
+
 ### Headlamp: log in and actually list something
 
 **The `200` above proves nothing about Headlamp working.** That curl hits `/`,
@@ -1360,12 +1389,12 @@ apart, so identify it before digging:**
 
 | Symptom | Cause | Where |
 |---|---|---|
-| Login **bounces back to the login screen** | API server does not trust Dex's token | **§8b** — assert the JWTAuthenticator exists |
+| Login **bounces back to the login screen** | API server does not trust Dex's token | **§11** — assert the JWTAuthenticator exists |
 | GitHub rejects you at Dex ("user not in required orgs or teams") | org/team gate | §2b, `orgs:` in dex values |
 | Login **succeeds, UI shows nothing** | RBAC | §8c group string, or Headlamp's own role below |
 
 The bounce-back case is the easiest to misread as a permissions problem, because
-the login itself works. Check §8b first — it leaves no cluster-visible artifact,
+the login itself works. Check §11 first — it leaves no cluster-visible artifact,
 so it is also the easiest step to have skipped:
 
 ```bash
@@ -1419,7 +1448,7 @@ kubectl --kubeconfig k8s/access/oidc-kubeconfig get nodes
 This opens a browser for GitHub login the first time. Success proves the whole
 developer path: Dex issues the token, the API server's JWTAuthenticator accepts
 its audience, and RBAC grants the access. `Unauthorized` here usually means
-`kubectl` is missing from the JWTAuthenticator's `audiences` (§8b) — run
+`kubectl` is missing from the JWTAuthenticator's `audiences` (§11) — run
 `kubectl oidc-login clean` after fixing it, to drop the cached rejected token.
 
 There is deliberately **no ArgoCD endpoint** — see the next section.

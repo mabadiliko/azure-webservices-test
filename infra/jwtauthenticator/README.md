@@ -41,8 +41,10 @@ get per-namespace `RoleBinding`s on their individual `aks:jwt:<login>` user.
 ## Per-host note
 
 `issuer.url` is environment-specific, so the committed file carries
-`https://dex.<HOST>` and §8b of `docs/install.md` fills it from `$HOST` before
+`https://dex.<HOST>` and §11 of `docs/install.md` fills it from `$HOST` before
 registering the authenticator. Nothing needs editing when porting — set `$HOST`.
+It is done there, not earlier, because Azure rejects an issuer URL it cannot
+reach, so Dex must already be serving.
 
 This is the one `<HOST>` that `scripts/check-placeholders.sh` cannot see: it
-scans YAML under `k8s/`, and this is JSON under `infra/`. §8b asserts it instead.
+scans YAML under `k8s/`, and this is JSON under `infra/`. §11 asserts it instead.
