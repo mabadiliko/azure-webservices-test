@@ -1002,16 +1002,33 @@ decrypt, including after the next rebuild.
 kubectl -n sealed-secrets logs deploy/sealed-secrets-controller --tail=50 | grep -i 'private key'
 ```
 
-Expect `registered private key` with **`secretname=sealed-secrets-key`**. A
-generated name like `sealed-secrets-keyXXXXX` means it lost the race. The fix is
-a restart, once the durable key exists:
+Expect `registered private key` with **`secretname=sealed-secrets-key`**. If the
+only name logged is a generated one like `sealed-secrets-keyXXXXX`, the controller
+won the race against ESO and made its own key. The fix is a restart, once the
+durable key exists:
 
 ```bash
 kubectl -n sealed-secrets rollout restart deploy/sealed-secrets-controller
 ```
 
-Then confirm the fingerprint matches Key Vault, and that the durable key is the
-newest (the controller seals with the most recent key it holds).
+**After a repair both names appear in the log, and that is correct** — the
+controller keeps every key it finds, so anything sealed with the old one stays
+decryptable. What matters is which key it *seals* with, which is the newest it
+holds. Ask the controller instead of reading the log:
+
+```bash
+kubectl -n sealed-secrets port-forward svc/sealed-secrets-controller 18080:8080 &
+sleep 3
+curl -sS http://127.0.0.1:18080/v1/cert.pem | openssl x509 -noout -fingerprint -sha256
+kill %1
+
+# Must be the same fingerprint as the durable cert in Key Vault:
+az keyvault secret show --vault-name $KEY_VAULT_NAME --name sealed-secrets-tls-crt \
+  --query value -o tsv | openssl x509 -noout -fingerprint -sha256
+```
+
+If they differ, the controller is sealing with a key that is **not** in Key Vault
+and the next rebuild cannot decrypt what you seal today.
 
 ### Backups are actually running
 
