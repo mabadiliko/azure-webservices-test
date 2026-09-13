@@ -684,7 +684,6 @@ infra secrets. See [decisions.md](decisions.md).
    ArgoCD syncs from the remote, so an unpushed commit changes nothing in the
    cluster — and the symptom is indistinguishable from a failed sync.
 
-
 3. **Verify** — the database and role exist, and the project's Secret is synced.
    Uses the same `$ENVS` set from step 1:
    ```bash
