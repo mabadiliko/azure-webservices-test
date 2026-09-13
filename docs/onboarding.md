@@ -662,10 +662,23 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
 
    ```bash
    cd "$(git rev-parse --show-toplevel)"
-   git add "k8s/infra-manifest/postgres/databases/$PROJECT.yaml"
+
+   # The sed above only substitutes PROJECT — it knows nothing about $ENVS, so a
+   # project that is not exactly `dev prod` silently gets the wrong blocks.
+   # Assert before committing; there is no later check that catches this.
+   f="k8s/infra-manifest/postgres/databases/$PROJECT.yaml"
+   for env in $ENVS; do
+     grep -q "name: $PROJECT-$env$" "$f" || echo "MISSING: no block for $env in $f"
+   done
+   echo "Database blocks: $(grep -c '^kind: Database$' "$f")   environments: $(echo $ENVS | wc -w)"
+
+   git add "$f"
    git diff --cached                    # check the names before pushing
    git commit -m "Add $PROJECT databases on the shared server"
    ```
+
+   The two counts must match. They will not if `$ENVS` is anything other than
+   `dev prod` and you have not edited the file.
 
    > **Single-namespace project** (§A2's "one namespace only", where the
    > namespace is just `$PROJECT` with no suffix): the env suffix is part of
@@ -680,9 +693,26 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
    cd "$(git rev-parse --show-toplevel)/k8s/projects/$PROJECT/infra"
    git mv database.yaml.example database.yaml
    ```
-   It produces a Secret named `$PROJECT-db` **in each namespace** — with `host`,
-   `port`, `dbname`, `username`, `password` and a ready-made `uri`, each pointing
-   at that environment's own database.
+   It produces a Secret named `$PROJECT-db` — with `host`, `port`, `dbname`,
+   `username`, `password` and a ready-made `uri` — pointing at that environment's
+   own database.
+
+   **It ships `dev` and `prod` blocks only.** Like the infra file in step 1, this
+   template is substituted for `PROJECT` and knows nothing about `$ENVS`. If this
+   project has any other set of environments, **edit `database.yaml` now**: copy a
+   whole block and change the suffix for each extra environment, or delete the
+   blocks you do not need. Then assert it, before committing:
+
+   ```bash
+   for env in $ENVS; do
+     grep -q "namespace: $PROJECT-$env$" database.yaml || echo "MISSING: no block for $env"
+   done
+   echo "ExternalSecret blocks: $(grep -c '^kind: ExternalSecret$' database.yaml)   environments: $(echo $ENVS | wc -w)"
+   ```
+
+   The two counts must match. A missing block is invisible afterwards: that
+   namespace simply never gets a `$PROJECT-db` Secret, and nothing reports it
+   until something tries to connect.
 
    **Then grant those namespaces access to the store.** The shared
    `ClusterSecretStore` refuses namespaces that do not opt in. In
@@ -716,10 +746,9 @@ namespace: the `Database` and `DatabaseRole` must live beside the shared cluster
    git push
    ```
 
-   > **dev + prod is the default**, matching the namespaces in §A2. For a single
-   > environment, delete the prod block from **both** files and drop the `-dev`
-   > suffix in what remains; for staging, copy a block in each and change the
-   > suffix. Remember the matching Key Vault password either way.
+   > **Single-environment project?** Drop the `-dev` suffix from the names in
+   > both files as well as deleting the other block, and rename the Key Vault
+   > secret to match — step 1's loop created it with the suffix.
 
 3. **Verify** — the database and role exist, and the project's Secret is synced.
    Uses the same `$ENVS` set from step 1:
