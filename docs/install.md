@@ -55,6 +55,11 @@ LOG_WORKSPACE=log-webservices-test # audit workspace (must match auditWorkspaceN
 # shell for an install where that mailbox is not ready yet.
 ALERT_EMAIL=info@scouterna.se
 SLACK_ALERT_CHANNEL='#webservices-alerts'   # must match the channel in kube-prometheus-stack-values.yaml
+# Alertmanager posts to that channel through an Incoming Webhook. Create a Slack
+# app with one scoped to $SLACK_ALERT_CHANNEL, then paste the URL here in your
+# shell. It is a bearer credential: anyone holding it can post to the channel, so
+# the real value never gets committed.
+SLACK_WEBHOOK_URL=<incoming-webhook-url-from-slack>
 
 # --- Identities (in $INFRA_RG; persist across rebuilds) ---
 ESO_IDENTITY=id-eso-webservices       # managed identity ESO authenticates as
@@ -412,9 +417,13 @@ az keyvault secret set --vault-name $KEY_VAULT_NAME --name grafana-github-client
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-github-client-secret   --value "$DEX_GITHUB_CLIENT_SECRET"
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name dex-headlamp-client-secret --value "$DEX_HEADLAMP_CLIENT_SECRET"
 
-# Slack incoming webhook for Alertmanager. Create it in Slack first (an app with
-# an Incoming Webhook scoped to $SLACK_ALERT_CHANNEL); the URL is a bearer
-# credential — anyone holding it can post to the channel.
+# Slack incoming webhook for Alertmanager (§0). Assert before storing: a
+# placeholder here leaves Alertmanager running and delivering nothing, which
+# reads exactly like a quiet channel.
+case "$SLACK_WEBHOOK_URL" in
+  https://hooks.slack.com/services/*) ;;
+  *) echo "STOP: SLACK_WEBHOOK_URL is not a real Slack webhook — see §0" ;;
+esac
 az keyvault secret set --vault-name $KEY_VAULT_NAME --name alertmanager-slack-webhook-url   --value "$SLACK_WEBHOOK_URL"
 ```
 
