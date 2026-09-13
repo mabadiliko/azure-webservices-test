@@ -614,6 +614,21 @@ Dex itself. The `az feature register` can take several minutes to leave
 > extension: aks-preview`. That is expected, not a problem.
 
 ```bash
+# Check first. All three must be true before the authenticator can be added,
+# and on a subscription that has done this before they already are.
+az extension list --query "[?name=='aks-preview'].version" -o tsv   # expect a version
+az feature show --namespace Microsoft.ContainerService \
+  --name JWTAuthenticatorPreview --query properties.state -o tsv    # expect Registered
+az provider show --namespace Microsoft.ContainerService \
+  --query registrationState -o tsv                                  # expect Registered
+```
+
+**All three as expected? Skip the rest of this step** and go straight to
+`dex.json` below. Feature registration is subscription-wide and permanent, so an
+earlier install on this subscription has already done it — there is nothing to
+repeat. Otherwise run only the parts that came back wrong:
+
+```bash
 az extension add --name aks-preview                                    # once per workstation
 # "No stable version ... Preview versions allowed" and "already installed" are
 # both normal: aks-preview only ever ships preview builds.
@@ -621,7 +636,10 @@ az extension add --name aks-preview                                    # once pe
 az feature register --namespace Microsoft.ContainerService --name JWTAuthenticatorPreview
 az feature show --namespace Microsoft.ContainerService --name JWTAuthenticatorPreview \
   --query properties.state -o tsv                                      # wait for "Registered"
-az provider register --namespace Microsoft.ContainerService            # after it shows Registered
+
+# REQUIRED once the feature flips, and the step most often skipped: until the
+# provider is re-registered the feature reads Registered without being in effect.
+az provider register --namespace Microsoft.ContainerService
 ```
 
 `infra/jwtauthenticator/dex.json` carries the claim mappings. It holds a `<HOST>`
