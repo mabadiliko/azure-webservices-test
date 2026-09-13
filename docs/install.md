@@ -1182,8 +1182,15 @@ fails silently at post time. Prove it end to end rather than inferring it:
 kubectl -n monitoring get externalsecret alertmanager-slack   # READY True
 kubectl -n monitoring exec sts/alertmanager-kps-kube-prometheus-stack-alertmanager -c alertmanager   -- ls /etc/alertmanager/secrets/alertmanager-slack/          # expect: webhook-url
 
-# 2. Alertmanager loaded the config and resolved the receivers
-kubectl -n monitoring exec sts/alertmanager-kps-kube-prometheus-stack-alertmanager -c alertmanager   -- wget -qO- localhost:9093/api/v2/status | grep -o '"name":"slack"'
+# 2a. Alertmanager resolved the receivers. Use /api/v2/receivers, NOT
+#     /api/v2/status: status embeds the config as one escaped YAML string, where
+#     the receiver reads `name: slack`, so a JSON-shaped pattern never matches
+#     however correct the config is.
+kubectl -n monitoring exec sts/alertmanager-kps-kube-prometheus-stack-alertmanager -c alertmanager   -- wget -qO- localhost:9093/api/v2/receivers | grep -o '"name":"slack"'
+
+# 2b. ...and that receiver is wired to the MOUNTED webhook file. 2a only proves
+#     the name exists; a receiver with no slack_configs also answers to it.
+kubectl -n monitoring exec sts/alertmanager-kps-kube-prometheus-stack-alertmanager -c alertmanager   -- wget -qO- localhost:9093/api/v2/status   | grep -o 'api_url_file: /etc/alertmanager/secrets/alertmanager-slack/webhook-url'
 
 # 3. delivery works — fire a synthetic alert and watch for it in Slack
 kubectl -n monitoring exec sts/alertmanager-kps-kube-prometheus-stack-alertmanager -c alertmanager   -- wget -qO- --post-data='[{"labels":{"alertname":"SlackPipelineTest","severity":"critical"}}]'      --header='Content-Type: application/json' localhost:9093/api/v2/alerts
