@@ -21,6 +21,17 @@ spec:
     path: k8s/infra-manifest/postgres
     directory:
       recurse: false          # databases/ is a separate app
+  ignoreDifferences:
+    # ESO writes defaults back into every ExternalSecret it reconciles.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      managedFieldsManagers:
+        - external-secrets
+    # The CNPG operator defaults ~15 fields on the Cluster it manages.
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      managedFieldsManagers:
+        - manager
   syncPolicy:
     automated:
       prune: true

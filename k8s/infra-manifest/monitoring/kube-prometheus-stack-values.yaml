@@ -115,6 +115,16 @@ grafana:
       jsonData:
         timeInterval: 30s
 
+# AKS does not expose the controller manager or the scheduler, and Cilium
+# replaces kube-proxy, so all three Services sit with zero endpoints and their
+# *Down rules fire forever. docs/decisions.md entry 11.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
 prometheus:
   prometheusSpec:
     # Local window only — long-term copies live in Thanos. NEVER set retention to
