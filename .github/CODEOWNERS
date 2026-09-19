@@ -2,14 +2,14 @@
 # code-owner review can actually fire here. Restore from the original before
 # using this repo for anything else.
 
-/k8s/                   @hakan-persson
-/infra/                 @hakan-persson
-/monitoring/            @hakan-persson
-/.github/               @hakan-persson
+/k8s/                   @zyberit
+/infra/                 @zyberit
+/monitoring/            @zyberit
+/.github/               @zyberit
 
 # Exemptions — last matching pattern wins.
 /k8s/projects/
 /k8s/infra-manifest/postgres/databases/
 
 # Not routine: points ArgoCD at an external repo.
-/k8s/projects/*/gitops.yaml    @hakan-persson
+/k8s/projects/*/gitops.yaml    @zyberit
