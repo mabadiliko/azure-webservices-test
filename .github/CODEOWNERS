@@ -1,15 +1,12 @@
-# TEST FIXTURE — owners rewritten to a valid mabadiliko-org identity so that
-# code-owner review can actually fire here. Restore from the original before
-# using this repo for anything else.
+# Changes under these paths require review from the Webservices Infra team.
+# https://github.com/orgs/Scouterna/teams/webservices-infra
 
-/k8s/                   @zyberit
-/infra/                 @zyberit
-/monitoring/            @zyberit
-/.github/               @zyberit
+# Cluster state — anything here changes what ArgoCD applies.
+/k8s/                   @Scouterna/webservices-infra
 
-# Exemptions — last matching pattern wins.
-/k8s/projects/
-/k8s/infra-manifest/postgres/databases/
+# Cluster provisioning and monitoring stack.
+/infra/                 @Scouterna/webservices-infra
+/monitoring/            @Scouterna/webservices-infra
 
-# Not routine: points ArgoCD at an external repo.
-/k8s/projects/*/gitops.yaml    @zyberit
+# CI and repo policy.
+/.github/               @Scouterna/webservices-infra
