@@ -79,3 +79,4 @@ metrics:
     enabled: true
     additionalLabels:
       release: kps
+# test: owned path
